@@ -41,6 +41,7 @@ except:
 
 class CodeHandler(SimpleHTTPRequestHandler):
     def end_headers(self):
+        self.send_header("access-control-allow-origin", "*")
         self.send_header("cross-origin-resource-policy:", "cross-origin")
         self.send_header("cross-origin-opener-policy", "cross-origin")
         self.send_header("cross-origin-embedder-policy", "require-corp")
@@ -187,6 +188,10 @@ class CodeHandler(SimpleHTTPRequestHandler):
 
                 file_size = len(content)
                 f = io.BytesIO(content)
+            elif self.path.endswith(".json"):
+                print()
+                print(self.path)
+                print()
 
             elif path.endswith(".html"):
                 print("REPLACING", path, CDN, PROXY)
@@ -282,7 +287,7 @@ if not ".wasm" in CodeHandler.extensions_map:
 def run_code_server(args, cc):
     global CACHE, CDN, PROXY, BCDN, BPROXY
     CACHE = Path(args.cache)
-    CDN = args.cdn
+    CDN = '/'.join( args.cdn.split('/')[0:3] )
     PROXY = cc["proxy"]
 
     BCDN = CDN.encode("utf-8")

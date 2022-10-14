@@ -6,7 +6,7 @@ readline.complete = function (line) {
     if ( readline.history[ readline.history.length -1 ] != line )
         readline.history.push(line);
     readline.index = 0;
-    python.PyRun_SimpleString(line + "\n")
+    python.readline(line + "\n")
 
 }
 
@@ -14,14 +14,14 @@ readline.complete = function (line) {
 if (!window.Terminal) {
     var xterm_cdn
     if (window.Module.config && window.Module.config.cdn) {
-        xterm_cdn = window.Module.config.cdn+"xtermjsixel/"
+        xterm_cdn = window.Module.config.cdn+"vt/"
         console.log("Terminal+ImageAddon importing from CDN :", xterm_cdn)
     } else {
-        xterm_cdn = xterm_cdn || "https://pygame-web.github.io/archives/0.2.0/xtermjsixel/"
+        xterm_cdn = xterm_cdn || "https://pygame-web.github.io/archives/vt/"
         console.warn("Terminal+ImageAddon importing from fallback ", xterm_cdn)
     }
 
-    for (const css of ["xterm.css","style.css"]) {
+    for (const css of ["xterm.css"]) { //,"style.css"]) {
             const cssref = document.createElement('link')
             cssref.setAttribute("rel", "stylesheet")
             cssref.setAttribute("type", "text/css")
@@ -51,10 +51,11 @@ export class WasmTerminal {
         this.xterm = new Terminal(
             {
 //                allowTransparency: true,
+                allowProposedApi : true ,   // xterm 0.5 + sixel
                 scrollback: 10000,
                 fontSize: 14,
                 theme: { background: '#1a1c1f' },
-                cols: (cols || 100), rows: (rows || 25)
+                cols: (cols || 132), rows: (rows || 30)
             }
         );
 

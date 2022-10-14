@@ -18,7 +18,7 @@ def breakpointhook(*argv, **kw):
 
 def shed_yield():
     # TODO: coroutine id as pid
-    print("86", time_time() - aio.enter, aio.spent)
+    print("21", time_time() - aio.enter, aio.spent)
     return True
 
 
@@ -120,7 +120,6 @@ if is_browser:
             cli.append(listener)
 
         def build(self, evt_name, jsondata):
-            # print( evt_name, jsondata )
             self.events.append([evt_name, json.loads(jsondata)])
 
         # def dispatchEvent
@@ -135,7 +134,6 @@ if is_browser:
                     discarded = True
                     for client in self.clients.get(evtype, []):
                         is_coro = inspect.iscoroutinefunction(client)
-                        print("    -> ", is_coro, client)
                         discarded = False
                         if is_coro:
                             await client(SimpleNamespace(**evdata))
@@ -151,33 +149,29 @@ if is_browser:
 
 # =============================  PRELOADING      ==============================
 
-
+preld_counter = -1
+prelist = {}
 ROOTDIR = f"/data/data/{sys.argv[0]}/assets"
 
 
 def explore(root):
-    global prelist, preloadedWasm, preloadedImages, preloadedAudios, counter
+    global prelist, preld_counter
 
-    if counter < 0:
-        counter = 0
+    if preld_counter < 0:
+        preld_counter = 0
 
     import shutil
 
-    preloads = f"{preloadedImages} {preloadedAudios} {preloadedWasm}".split(" ")
-    print(f"194: preloads {preloads}")
-
     for current, dirnames, filenames in os.walk(root):
         for filename in filenames:
-            if filename.find(".") > 1:
-                ext = filename.rsplit(".", 1)[-1].lower()
-                if ext in preloads:
-                    counter += 1
-                    src = f"{current}/{filename}"
-                    dst = "/tmp/pre" + str(counter).zfill(4) + "." + ext
-                    print(src, "->", dst)
-                    shutil.copyfile(src, dst)
-                    prelist[src] = dst
-                    embed.preload(dst)
+            if filename.endswith(".so"):
+                preld_counter += 1
+                src = f"{current}/{filename}"
+                #                dst = "/tmp/pre" + str(preld_counter).zfill(4) + ".so"
+                #                print(f"175 {src} -> {dst}")
+                #                shutil.copyfile(src, dst)
+                #                prelist[src] = dst
+                embed.preload(src)
 
 
 def fix_preload_table():
@@ -222,19 +216,19 @@ def run_main(PyConfig, loaderhome=None, loadermain="main.py"):
         return False
 
     # do not do stuff if not called properly from our js loader.
-    if PyConfig.get("executable", None) is None:
+    if PyConfig.executable is None:
         # running in sim
         pdb("223: running in simulator")
         return False
 
-    sys.executable = PyConfig["executable"]
+    sys.executable = PyConfig.executable or "python"
 
     preloadedWasm = "so"
     preloadedImages = "png jpeg jpg gif"
     preloadedAudios = "wav ogg mp4"
 
     def preload_apk(p=None):
-        global counter, prelist, ROOTDIR
+        global preld_counter, prelist, ROOTDIR
         global explore, preloadedWasm, preloadedImages, preloadedAudios
         ROOTDIR = p or ROOTDIR
         if os.path.isdir(ROOTDIR):
@@ -245,26 +239,26 @@ def run_main(PyConfig, loaderhome=None, loadermain="main.py"):
 
         ROOTDIR = os.getcwd()
         LSRC = len(ROOTDIR) + 1
-        counter = -1
+        preld_counter = -1
         prelist = {}
 
         sys.path.insert(0, ROOTDIR)
 
         explore(ROOTDIR)
 
-        if counter < 0:
+        if preld_counter < 0:
             pdb(f"{ROOTDIR=}")
             pdb(f"{os.getcwd()=}")
 
-        print(f"assets found :", counter)
-        if not counter:
+        print(f"269 assets found :", preld_counter)
+        if not preld_counter:
             embed.run()
 
         return True
 
     import aio
 
-    if PyConfig.get("interactive", False):
+    if PyConfig.interactive:
         import aio.clock
 
         aio.clock.start(x=80)
@@ -287,7 +281,7 @@ def run_main(PyConfig, loaderhome=None, loadermain="main.py"):
             if loadermain:
                 if os.path.isfile("main.py"):
                     print(
-                        f"283: running {ROOTDIR}/{loadermain} for {sys.argv[0]} (deferred)"
+                        f"290: running {ROOTDIR}/{loadermain} for {sys.argv[0]} (deferred)"
                     )
                     aio.defer(execfile, [f"{ROOTDIR}/{loadermain}"], {})
                 else:
@@ -316,7 +310,7 @@ def run_main(PyConfig, loaderhome=None, loadermain="main.py"):
         aio.started = True
         aio.create_task(EventTarget.process())
     else:
-        print("308: EventTarget delayed by loader")
+        print("319: EventTarget delayed by loader")
 
 
 #

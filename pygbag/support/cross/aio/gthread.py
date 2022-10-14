@@ -69,6 +69,9 @@ class Lock:
         return self.count > 0
 
 
+RLock = Lock
+
+
 class Condition:
     def __init__(self, lock=None):
         self.lock = lock or Lock()

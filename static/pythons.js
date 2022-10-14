@@ -2,6 +2,15 @@
 
 var config
 
+const FETCH_FLAGS = {
+    mode:"no-cors",
+    redirect: 'follow',
+    referrerPolicy: 'no-referrer',
+    credentials: 'omit'
+}
+
+
+
 if (window.config) {
    config = window.config
 } else {
@@ -103,24 +112,41 @@ window.iterator = function * iterator(oprom) {
 
 
 function checkStatus(response) {
-  if (!response.ok) {
-    throw new Error(`HTTP ${response.status} - ${response.statusText}`);
-  }
-  return response;
+    if (!response.ok) {
+        response.error =  new Error(`HTTP ${response.status} - ${response.statusText}`);
+        return null
+    }
+    return response;
 }
+
+
+window.addEventListener('unhandledrejection', function(event) {
+  console.error("uncaught :",event.promise); // the promise that generated the error
+  console.error("uncaught :",event.reason); // the unhandled error object
+})
+
 
 
 //fileretrieve (binary). TODO: wasm compilation
 window.cross_file = function * cross_file(url, store) {
     var content = 0
     console.log("cross_file.fetch", url )
-    fetch(url,{})
-        .then( response => checkStatus(response) && response.arrayBuffer() )
+    fetch(url, FETCH_FLAGS)
+        .then( response => {
+                if (response)
+                    response.arrayBuffer()
+                else
+                    content = "error"
+            })
         .then( buffer => content = new Uint8Array(buffer) )
-        .catch(x => console.error(x))
+        .catch(x => console.error("cross_file :",x))
 
     while (!content)
         yield content
+
+    if ( content == "error" )
+        return response.error
+
     FS.writeFile(store, content )
     console.log("cross_file.fetch",store,"r/w=", content.byteLength )
     yield store
@@ -268,24 +294,6 @@ function prerun(VM) {
 }
 
 
-async function _rcp(url, store) {
-    var content
-    try {
-        content = await fetch(url)
-    } catch (x) { return false }
-
-    store = store || ( "/data/data/" + url )
-    console.info(__FILE__,`rcp ${url} => ${store}`)
-    if (content.ok) {
-        const text= await content.text()
-        await vm.FS.writeFile( store, text);
-        return true;
-    } else {
-        console.error(__FILE__,`can't rcp ${url} to ${store}`)
-        return false;
-    }
-}
-
 const vm = {
         APK : "org.python",
 
@@ -295,6 +303,8 @@ const vm = {
         sys_argv : [],
 
         script : {},
+
+        is_ready : 0,
 
         DEPRECATED_wget_sync : DEPRECATED_wget_sync,
 
@@ -367,12 +377,32 @@ const vm = {
         },
 
         PyRun_SimpleString : function(code) {
+            const ud = { "type" : "rcon", "data" : code }
             if (window.worker) {
-                window.worker.postMessage({ target: 'custom', userData: code });
+                window.worker.postMessage({ target: 'custom', userData: ud });
             } else {
-                this.postMessage(code);
+                this.postMessage(ud);
             }
         },
+
+        readline : function(line) {
+            const ud = { "type" : "stdin", "data" : line }
+            if (window.worker) {
+                window.worker.postMessage({ target: 'custom', userData: ud });
+            } else {
+                this.postMessage(ud);
+            }
+        },
+
+        rawstdin : function (char) {
+            const ud = { "type" : "raw", "data" : char }
+            if (window.worker) {
+                window.worker.postMessage({ target: 'custom', userData: ud });
+            } else {
+                this.postMessage(ud);
+            }
+        },
+
 
         preRun : [ prerun ],
         postRun : [ function (VM) {
@@ -382,14 +412,13 @@ const vm = {
 }
 
 
-async function custom_postrun() {
-    console.warn("VM.postrun")
+function run_pyrc(content) {
+    const pyrc_file = "/data/data/org.python/assets/pythonrc.py"
+    FS.writeFile(pyrc_file, content )
 
-    if (await _rcp(vm.config.cdn + "pythonrc.py","/data/data/pythonrc.py")) {
+    vm.FS.writeFile( "/data/data/org.python/assets/main.py" , vm.script.blocks[0] )
 
-        vm.FS.writeFile( "/data/data/org.python/assets/main.py" , vm.script.blocks[0] )
-
-        var runsite = `#!
+    python.PyRun_SimpleString(`#!site
 print(" ")
 print("* site.py from pythons.js *")
 import os, sys, json
@@ -400,8 +429,8 @@ if os.path.isdir(PyConfig['prefix']):
     os.chdir(PyConfig['prefix'])
 
 for what,fn in (
-    ["pythonrc", "/data/data/pythonrc.py"],
-    ["pythonstartup/usersite", "/data/data/org.python/assets/main.py"],
+        ["pythonrc", "${pyrc_file}"],
+        ["pythonstartup/usersite", "/data/data/org.python/assets/main.py"],
     ):
     print(" ")
     print(f"* {what} from {fn} *")
@@ -409,14 +438,22 @@ for what,fn in (
         exec(open(fn).read(), globals(), globals())
     else:
         print(fn,"not found")
-
+print("* site.py done *")
 #
-`
-        python.PyRun_SimpleString(runsite)
-
-    }
+`)
+}
 
 
+async function custom_postrun() {
+    console.warn("VM.postrun Begin")
+    const pyrc_url = vm.config.cdn + "pythonrc.py"
+    var content = 0
+    console.log("cross_file.fetch", pyrc_url )
+    fetch(pyrc_url, {})
+        .then( response => checkStatus(response) && response.arrayBuffer() )
+        .then( buffer => run_pyrc(new Uint8Array(buffer)) )
+        .catch(x => console.error(x))
+    console.warn("VM.postrun End")
 }
 
 
@@ -437,7 +474,9 @@ function feat_gui(debug_hidden) {
         canvas.style.top = "0px"
         canvas.style.right = "0px"
         document.body.appendChild(canvas)
-        var ctx = canvas.getContext("2d")
+console.warn("TODO: test 2D/3D reservation")
+
+        //var ctx = canvas.getContext("2d")
     } else {
         // user managed canvas
         config.user_canvas = config.user_canvas || 1
@@ -445,55 +484,57 @@ function feat_gui(debug_hidden) {
 
     vm.canvas = canvas
 /*
-    var gl
-    const gl_aa = false
+    function GL_TEST() {
+        var gl
+        const gl_aa = false
 
-    try {
-        gl = canvas.getContext("webgl2")
-    } catch (x) {
-        console.error("FIXME NO WEBGL2:", x)
-        gl = null;
-    }
-
-    if (!gl) {
         try {
-            gl = canvas.getContext("webgl");
+            gl = canvas.getContext("webgl2")
         } catch (x) {
-            console.error("FIXME WEBGL:", x)
+            console.error("FIXME NO WEBGL2:", x)
             gl = null;
         }
-    }
 
-    if (!gl) {
-        try {
-            gl = canvas.getContext("experimental-webgl");
-        } catch (x) {
-            console.error("FIXME experimental-webgl :", x)
-            gl = null;
+        if (!gl) {
+            try {
+                gl = canvas.getContext("webgl");
+            } catch (x) {
+                console.error("FIXME WEBGL:", x)
+                gl = null;
+            }
+        }
+
+        if (!gl) {
+            try {
+                gl = canvas.getContext("experimental-webgl");
+            } catch (x) {
+                console.error("FIXME experimental-webgl :", x)
+                gl = null;
+            }
+        }
+
+        console.log("GL :", gl)
+        if (gl) {
+            var ext = gl.getExtension('OES_standard_derivatives');
+            if (!ext)
+                console.log('GL: [OES_standard_derivatives] supported');
+            else
+                console.log('GL: Error [OES_standard_derivatives] derivatives *not* supported');
+
+
+            var antialias = gl.getContextAttributes().antialias;
+            console.log('GL: antialias = '+antialias);
+
+            var aasize = gl.getParameter(gl.SAMPLES);
+            console.log('GL: antialias size = '+aasize );
+        } else  {
+            console.error("Uh, your browser doesn't support WebGL. This application won't work.");
+            return;
+
         }
     }
-
-    console.log("GL :", gl)
-    if (gl) {
-        var ext = gl.getExtension('OES_standard_derivatives');
-        if (!ext)
-            console.log('GL: [OES_standard_derivatives] supported');
-        else
-            console.log('GL: Error [OES_standard_derivatives] derivatives *not* supported');
-
-
-        var antialias = gl.getContextAttributes().antialias;
-        console.log('GL: antialias = '+antialias);
-
-        var aasize = gl.getParameter(gl.SAMPLES);
-        console.log('GL: antialias size = '+aasize );
-    } else  {
-        console.error("Uh, your browser doesn't support WebGL. This application won't work.");
-        return;
-
-    }
+    setTimeout(GL_TEST,500);
 */
-
 
     // window resize
     function window_canvas_adjust(divider) {
@@ -712,7 +753,7 @@ async function feat_vtx(debug_hidden) {
     const { WasmTerminal } = await import("./vtx.js")
 
     vm.vt = new WasmTerminal("terminal", 132, 42, [
-            { url : "./xtermjsixel/xterm-addon-image-worker.js", sixelSupport:true }
+            { url : (config.cdn || "./") + "xtermjsixel/xterm-addon-image-worker.js", sixelSupport:true}
     ] )
 }
 
@@ -1005,7 +1046,7 @@ console.log("pythons found at", url , elems)
             }
 
             if (vm.cpy_argv.length)
-                vm.script.interpreter = vm.cpy_argv[0]
+                vm.script.interpreter = vm.cpy_argv[0] || script.dataset.python || "cpython"
             else {
                 vm.script.interpreter = "cpython"
                 console.log("no python implementation specified, using default :",vm.script.interpreter)
@@ -1102,6 +1143,7 @@ config.interactive = config.interactive || (location.search.search("-i")>=0) //?
             console.log('url=', url)
             console.log('src=', script.src)
             console.log('data-src=', script.dataset.src)
+            console.log('data-python=', script.dataset.python)
             console.log('script: id=', script.id)
             console.log('code : ' , code.length, ` as ${script.id}.py`)
             vm.config = config
@@ -1140,11 +1182,11 @@ function queue_event(evname, data) {
     const jsdata = JSON.stringify(data)
     EQ.push( { name : evname, data : jsdata} )
 
-    if (window.python) {
+    if (window.python && window.python.is_ready) {
         while (EQ.length>0) {
             const ev = EQ.shift()
             python.PyRun_SimpleString(`#!
-__EMSCRIPTEN__.EventTarget.build('${ev.name}', """${ev.data}""")
+__EMSCRIPTEN__.EventTarget.build('${ev.name}', '''${ev.data}''')
 `)
         }
     } else {
@@ -1157,9 +1199,9 @@ __EMSCRIPTEN__.EventTarget.build('${ev.name}', """${ev.data}""")
 
 function download(diskfile, filename) {
     if (!filename)
-        filename = diskfile.rsplit("/")
+        filename = diskfile.rsplit("/").pop()
 
-    const blob = new Blob([FS.readFile(filename)])
+    const blob = new Blob([FS.readFile(diskfile)])
     const elem = window.document.createElement('a');
     elem.href = window.URL.createObjectURL(blob);
     elem.download = filename;
@@ -1177,7 +1219,10 @@ async function media_prepare(trackid) {
 
     if (track.type === "audio") {
         //console.log(`audio ${trackid}:${track.url} ready`)
-        return trackid
+    }
+
+    if (track.type === "fs") {
+        console.log(`fs ${trackid}:${track.url} => ${track.path} ready`)
     }
 
     if (track.type === "mount") {
@@ -1246,7 +1291,6 @@ function MM_autoevents(track) {
         return
     }
 
-    media.MM_auto = 1
     media.addEventListener("canplaythrough", (event) => {
         track.ready = true
         if (track.auto)
@@ -1265,111 +1309,119 @@ function MM_autoevents(track) {
 }
 
 
+window.cross_dl = async function cross_dl(trackid, url, flags) {
+    var response = await fetch(url, flags || FETCH_FLAGS);
 
-
-
-
-window.cross_dl = async function cross_dl(trackid, url, autoready) {
-    var response = await fetch(url);
+    checkStatus(response)
 
     const reader = response.body.getReader();
 
     const len = +response.headers.get("Content-Length");
-
-
+    const track = MM[trackid]
 
     // concatenate chunks into single Uint8Array
-    MM[trackid].data = new Uint8Array(len);
-    MM[trackid].pos = 0
-    MM[trackid].len = len
+    track.data = new Uint8Array(len);
+    track.pos = 0
+    track.len = len
 
-    console.warn(url, MM[trackid].len)
+    console.warn(url, track.len)
 
     while(true) {
         const {done, value} = await reader.read()
 
         if (done) {
-            MM[trackid].avail = true
-            return
+            track.avail = true
+            break
+        }
+        try {
+            track.data.set(value, track.pos)
+        } catch (x) {
+            track.pos = -1
+            console.error("1323: cannot download", url)
         }
 
-        MM[trackid].data.set(value, MM[trackid].pos)
+        track.pos += value.length
 
-        MM[trackid].pos += value.length
-
-        console.log(`${trackid}:${url} Received ${MM[trackid].pos} of ${MM[trackid].len}`)
+        //console.log(`${trackid}:${url} Received ${track.pos} of ${track.len}`)
     }
+
+    console.log(`${trackid}:${url} Received ${track.pos} of ${track.len} to ${track.path}`)
+    if (track.type === "fs" ) {
+        FS.writeFile(track.path, track.data)
+    }
+
 }
 
 
 MM.prepare = function prepare(url, cfg) {
-        MM.tracks++;
-        const trackid = MM.tracks
-        var audio
+    MM.tracks++;
+    const trackid = MM.tracks
+    var audio
 
-        cfg = JSON.parse(cfg)
+    cfg = JSON.parse(cfg)
 
 
-        const transport = cfg.io || 'packed'
-        const type = cfg.type || 'bin'
+    const transport = cfg.io || 'packed'
+    const type = cfg.type || 'fs'
 
-        MM[trackid] = { ...cfg, ...{
-                "trackid": trackid,
-                "type"  : type,
-                "url"   : url,
-                "error" : false,
-                "len"   : 0,
-                "pos"   : 0,
-                "io"    : transport,
-                "ready" : undefined,
-                "avail" : undefined,
-                "media" : undefined,
-                "data"  : undefined
-            }
+    MM[trackid] = { ...cfg, ...{
+            "trackid": trackid,
+            "type"  : type,
+            "url"   : url,
+            "error" : false,
+            "len"   : 0,
+            "pos"   : 0,
+            "io"    : transport,
+            "ready" : undefined,
+            "auto"  : false,
+            "avail" : undefined,
+            "media" : undefined,
+            "data"  : undefined
         }
-        const track = MM[trackid]
+    }
+    const track = MM[trackid]
 
 //console.log("MM.prepare", trackid, transport, type)
 
-        if (transport === 'fs') {
-            if ( type === "audio" ) {
-                const blob = new Blob([FS.readFile(track.url)])
-                audio = new Audio(URL.createObjectURL(blob))
-                track.avail = true
-            } else {
-                console.error("fs transport is only for audio", JSON.stringify(track))
-                track.error = true
-                return track
-            }
+    if (transport === 'fs') {
+        if ( type === "audio" ) {
+            const blob = new Blob([FS.readFile(track.url)])
+            audio = new Audio(URL.createObjectURL(blob))
+            track.avail = true
+        } else {
+            console.error("fs transport is only for audio", JSON.stringify(track))
+            track.error = true
+            return track
         }
+    }
 
-        if (transport === "url" ) {
-            // audio tag can download itself
-            if ( type === "audio" ) {
-                audio = new Audio(url)
-                track.avail = true
-            } else {
+    if (transport === "url" ) {
+        // audio tag can download itself
+        if ( type === "audio" ) {
+            audio = new Audio(url)
+            track.avail = true
+        } else {
 console.log("MM.cross_dl", trackid, transport, type, url )
-                cross_dl(trackid, url)
-            }
+            cross_dl(trackid, url, {} )
         }
+    }
 
 
-        if (audio) {
-            track.media = audio
+    if (audio) {
+        track.media = audio
 
-            track.set_volume = (v) => { track.media.volume = 0.0 + v }
-            track.get_volume = () => { return track.media.volume }
-            track.stop = () => { track.media.pause() }
+        track.set_volume = (v) => { track.media.volume = 0.0 + v }
+        track.get_volume = () => { return track.media.volume }
+        track.stop = () => { track.media.pause() }
 
-            track.play = (loops) => { MM_play( track, loops) }
+        track.play = (loops) => { MM_play( track, loops) }
 
-            MM_autoevents(track)
+        MM_autoevents(track)
 
-        }
+    }
 
 //console.log("MM.prepare", url,"queuing as",trackid)
-        media_prepare(trackid)
+    media_prepare(trackid)
 //console.log("MM.prepare", url,"queued as",trackid)
     return track
 }
@@ -1406,41 +1458,43 @@ MM.load = function load(trackid, loops) {
 
 
 MM.play = function play(trackid, loops, start, fade_ms) {
-//console.log("MM.play",trackid, loops, MM[trackid] )
-            const track = MM[trackid]
-            track.loops = loops
-            if (track.ready)
+    console.log("MM.play",trackid, loops, MM[trackid] )
+    const track = MM[trackid]
+    track.loops = loops
+    if (track.ready)
+        track.media.play()
+    else {
+        console.warn("Cannot play before user interaction, will retry", track )
+        function play_asap() {
+            if (track.ready) {
                 track.media.play()
-            else {
-                console.warn("Cannot play before user interaction, will retry", track )
-                function play_asap() {
-                    if (track.ready) {
-                        track.media.play()
-                    } else {
-                        setTimeout(play_asap, 500)
-                    }
-                }
-                play_asap()
+            } else {
+                setTimeout(play_asap, 500)
             }
-}
-
-MM.stop = function stop(trackid) {
-//console.log("MM.stop", trackid, MM[trackid] )
-            MM[trackid].media.pause()
-}
-
-if (navigator.connection) {
-    if ( navigator.connection.type === 'cellular' ) {
-        console.warn("Connection:","Cellular")
-        if ( navigator.connection.downlinkMax <= 0.115) {
-            console.warn("Connection:","2G")
         }
-    } else {
-        console.warn("Connection:","Wired")
+        play_asap()
     }
 }
 
+MM.stop = function stop(trackid) {
+    console.log("MM.stop", trackid, MM[trackid] )
+    MM[trackid].media.currentTime = 0
+    MM[trackid].media.pause()
+}
 
+
+MM.pause = function pause(trackid) {
+    console.log("MM.pause", trackid, MM[trackid] )
+    MM[trackid].media.pause()
+}
+
+MM.set_volume = function set_volume(trackid, vol) {
+    MM[trackid].media.volume = 1 * vol
+}
+
+MM.set_volume = function get_volume(trackid, vol) {
+    return MM[trackid].media.volume
+}
 
 
 window.chromakey = function(context, r,g,b, tolerance, alpha) {
@@ -1499,6 +1553,18 @@ window.mobile = () => {
 }
 
 
+if (navigator.connection) {
+    if ( navigator.connection.type === 'cellular' ) {
+        console.warn("Connection:","Cellular")
+        if ( navigator.connection.downlinkMax <= 0.115) {
+            console.warn("Connection:","2G")
+        }
+    } else {
+        console.warn("Connection:","Wired")
+    }
+}
+
+
 
 //TODO: battery
     // https://developer.mozilla.org/en-US/docs/Web/API/BatteryManager/levelchange_event
@@ -1528,9 +1594,12 @@ window.debug = function () {
                 window[e].hidden = debug_hidden
         }
     }
-    vm.PyRun_SimpleString("shell.uptime()")
+    vm.PyRun_SimpleString(`#!
+shell.uptime()
+`)
     window_resize()
 }
+
 
 
 
