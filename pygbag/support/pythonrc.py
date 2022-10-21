@@ -199,6 +199,11 @@ except:
     define("execfile", execfile)
 
 if defined("embed") and hasattr(embed, "readline"):
+    import inspect
+    from pathlib import Path
+    import json
+    # import urllib.request
+    # import aio.toplevel
 
     class shell:
         out = []
@@ -305,12 +310,20 @@ if defined("embed") and hasattr(embed, "readline"):
 
             filename = None
             for arg in map(str, argv):
-
                 if arg.startswith("-O"):
-                    filename = arg[2:].lstrip()
+                    filename = arg[2:].strip()
+                    yield f'saving to "{filename}"'
+                    break
+
+            for arg in map(str, argv):
+                if arg.startswith("-O"):
                     continue
-                filename, _ = urllib.request.urlretrieve(arg, filename=filename)
-                filename = None
+                fn = filename or str(argv[0]).rsplit('/')[-1]
+                try:
+                    filename, _ = urllib.request.urlretrieve(str(arg), filename=fn)
+                except Exception as e:
+                    yield e
+
             return True
 
         @classmethod
@@ -347,7 +360,7 @@ if defined("embed") and hasattr(embed, "readline"):
                     yield f"{hx}  {arg}"
 
         @classmethod
-        def exec(cls, cmd, *argv, **env):
+        def spawn(cls, cmd, *argv, **env):
             global pgzrun
             # TODO extract env from __main__ snapshot
             if cmd.endswith(".py"):
@@ -357,7 +370,7 @@ if defined("embed") and hasattr(embed, "readline"):
                     )
                     cls.stop()
                     pgzrun = None
-                    aio.defer(cls.exec, (cmd, *argv), env, delay=500)
+                    aio.defer(cls.spawn, (cmd, *argv), env, delay=500)
 
                 else:
                     execfile(cmd)
@@ -532,6 +545,98 @@ ________________________
             else:
                 print(f"last frame : {aio.spent / 0.016666666666666666:.4f}")
 
+        @classmethod
+        async def exec(cls, sub, *argv):
+            if inspect.isgenerator(sub):
+                for _ in sub:
+                    print(_)
+                return
+            elif inspect.isgeneratorfunction(sub):
+                for _ in sub(*argv):
+                    print(_)
+                return
+            elif inspect.iscoroutinefunction(sub):
+                await sub(*args)
+                return
+
+            from collections.abc import Iterator
+            if isinstance(sub, Iterator):
+                for _ in sub:
+                    print(_)
+                return
+            elif isinstance(sub, (str, Path,) ):
+                # subprocess
+                print("N/I", sub)
+            else:
+                await sub
+
+
+        @classmethod
+        async def preload(cls, main, callback=None):
+            # get a relevant list of modules likely to be imported
+            # and prefetch them if found in repo trees
+            imports = TopLevel_async_handler.list_imports(code=None, file=main)
+            print(f"579: {list(imports)}")
+            await TopLevel_async_handler.async_imports(*imports, callback=callback)
+            PyConfig.imports_ready = True
+            return True
+
+        @classmethod
+        async def source(cls, main, *args):
+            code = ""
+
+            def check_code(file_name):
+                nonlocal code
+                maybe_sync = False
+                has_pygame = False
+                with open(file_name,"r") as code_file:
+                    code = code_file.read()
+                    if code.find('asyncio.run')<0:
+                        print("575 possibly synchronous code found")
+                        maybe_sync = True
+
+                    has_pygame =  code.find('display.flip(')>0 or code.find('display.update(')>0
+
+                    if maybe_sync and has_pygame:
+                        return False
+                return True
+
+            if check_code(main):
+                print("585: running main and resuming EventTarget in a few seconds")
+                aio.defer(execfile, (main,), {} )
+
+                # makes all queued events arrive after program has looped a few cycles
+                # note that you need a call to asyncio.run in your main to continue past
+                # that check
+                while not aio.run_called:
+                    await asyncio.sleep(.1)
+
+
+                # if you don't reach that step
+                # your main.py has an infinite sync loop somewhere !
+                print("590: ready")
+
+
+                aio.create_task(platform.EventTarget.process())
+
+                pdb("platform event loop started")
+
+
+            else:
+                for base in ('pygame','pg'):
+                    for func in ('flip','update'):
+                        block =  f'{base}.display.{func}()'
+                        code = code.replace( block, f'{block};await asyncio.sleep(0)')
+
+                #print(" -> won't run synchronous code with a pygame loop")
+                shell.debug()
+
+                TopLevel_async_handler.instance.eval(code)
+                TopLevel_async_handler.instance.start_console(shell)
+
+
+
+
     def _process_args(argv, env):
         import inspect
 
@@ -624,6 +729,25 @@ if not aio.cross.simulator:
 
     def apply_patches():
 
+
+        # use shell generators instead of subprocesses
+        # ==========================================================
+
+        import os
+
+        def popen(iterator, **kw):
+            import io
+            kw.setdefault("file", io.StringIO(newline="\r\n"))
+            for line in iterator:
+                print(line,**kw)
+            kw['file'].seek(0)
+            return kw['file']
+
+        os.popen = popen
+
+        # add real browser functions
+        # ===========================================================
+
         import webbrowser
 
         def browser_open(url, new=0, autoraise=True):
@@ -653,7 +777,9 @@ if not aio.cross.simulator:
         # https://rdb.name/panda3d-webgl.md.html#supplementalmodules/asynchronousloading
         #
 
-        # bad and deprecated use of sync XHR
+
+        # use bad and deprecated sync XHR for urllib
+        # ============================================================
 
         import urllib
         import urllib.request
@@ -678,9 +804,9 @@ if not aio.cross.simulator:
             # pygbag developer mode
             if port == "8666":
                 PyConfig.dev_mode = 1
-            print(sys._emscripten_info)
 
         if PyConfig.dev_mode > 0:
+            print(sys._emscripten_info)
             # in pygbag dev mode use local repo
             PyConfig.pkg_indexes = []
             for idx in PYCONFIG_PKG_INDEXES_DEV:
@@ -788,6 +914,8 @@ if not aio.cross.simulator:
     import ast
     from pathlib import Path
 
+
+
     class TopLevel_async_handler(aio.toplevel.AsyncInteractiveConsole):
 
         repos = []
@@ -801,6 +929,27 @@ if not aio.cross.simulator:
         from pathlib import Path
 
         repodata = "repodata.json"
+
+
+
+        def raw_input(self, prompt):
+            if len(self.buffer):
+                return self.buffer.pop(0)
+
+            maybe = embed.readline()
+
+            if len(maybe):
+                return maybe
+            else:
+                return None
+            # raise EOFError
+
+
+        def eval(self, source):
+            for line in source.split('\n'):
+                self.buffer.append( line )
+            self.buffer.append("")
+            print(f"917 {len(self.buffer)} lines queued for async eval")
 
         @classmethod
         def scan_imports(cls, code, filename, load_try=False):
@@ -900,11 +1049,6 @@ if not aio.cross.simulator:
             #            refresh = False
             #            for pkg in packages:
             #                pkg_info = cls.repos[0]["packages"].get(pkg, None)
-
-            #                if pkg_info is None:
-            #                    pdb(f'144: package "{pkg}" not found in repodata')
-            #                    continue
-
             #                file_name = pkg_info.get("file_name", "")
             #                valid = False
             #                if file_name:
@@ -999,7 +1143,7 @@ if not aio.cross.simulator:
                     pkg_file = f"/tmp/{repo[want].rsplit('/',1)[-1]}"
 
                     cfg = {"io": "url", "type": "fs", "path": pkg_file}
-                    print("pkg :", pkg_url, "\n\t=>", pkg_file)
+                    print("pkg :", pkg_url)
 
                     track = platform.window.MM.prepare(pkg_url, json.dumps(cfg))
 
@@ -1059,6 +1203,12 @@ if not aio.cross.simulator:
                         pdb(f"{repo}: malformed json index {data}")
                         continue
                     PyConfig.pkg_repolist.append(repo)
+
+
+    # convert a emscripten FS path to a blob url
+    # TODO: weakmap and GC collect
+    def File(path):
+        return platform.window.blob(str(path))
 
 else:
     pdb("TODO: js simulator")
