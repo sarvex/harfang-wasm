@@ -27,13 +27,15 @@ pushd $(pwd)/src
         git restore .
         git pull
     else
-        git clone --no-tags --depth 1 --single-branch --branch wasm https://github.com/pmp-p/python-harfang3d-wasm harfang
+        #git clone --no-tags --depth 1 --single-branch --branch wasm https://github.com/pmp-p/python-harfang3d-wasm harfang
+        git clone --no-tags --depth 1 --single-branch --branch main https://github.com/harfang3d/harfang3d harfang
         pushd $(pwd)/harfang
         git submodule update --init --recursive
         git clone --depth 1 https://github.com/ejulien/FABGen fabgen
-        cp -r extern/pypeg2 ${SDKROOT}/devices/x86_64/usr/lib/python3.11/site-packages/
-        cp -r extern/pypeg2 ${SDKROOT}/devices/emsdk/usr/lib/python3.11/site-packages/
     fi
+
+    wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/20.diff | patch -p1
+
     export HG_SRC_DIR=$(pwd)
 
     FABGEN=$HG_SRC_DIR/fabgen
@@ -97,7 +99,8 @@ emcmake cmake $HG_SRC_DIR \
 if EMCC_CFLAGS="-DBX_CONFIG_DEBUG=0 -I${SDKROOT}/devices/emsdk/usr/include/python${PYBUILD} -Wno-unused-command-line-argument -lopenal" make -j4
 then
     HG=$(pwd)
-    cd $HG_SRC_DIR/wasm_test
+
+
 
 
     LINKALL=""
@@ -118,23 +121,29 @@ then
 
     LD_HARFANG="-lopenal -lSDL2 $LINKALL"
 
-    echo "
-        *   building cpp test :
-http://localhost:8000/archives/${PYGBAG_BUILD}/harfang_cpptest.html
-" 1>&2
+#    if [ -d $HG_SRC_DIR/wasm_test ]
+#    then
+#        cd $HG_SRC_DIR/wasm_test
+#        echo "
+#        *   building cpp test :
+#http://localhost:8000/archives/${PYGBAG_BUILD}/harfang_cpptest.html
+#" 1>&2
 
 
-    em++ \
-     -sUSE_WEBGL2 \
-     -sALLOW_MEMORY_GROWTH \
-     -I${HG_SRC_DIR}/harfang \
-     -I${HG_SRC_DIR}/extern \
-     -I${HG_SRC_DIR}/extern/bgfx/bgfx/include \
-     -I${HG_SRC_DIR}/extern/bgfx/bimg/include \
-     -o $DIST_DIR/harfang_cpptest.html app.cpp mdl_gles_fsb.cpp mdl_gles_vsb.cpp $LD_HARFANG
+#        em++ \
+#         -sUSE_WEBGL2 \
+#         -sALLOW_MEMORY_GROWTH \
+#         -I${HG_SRC_DIR}/harfang \
+#         -I${HG_SRC_DIR}/extern \
+#         -I${HG_SRC_DIR}/extern/bgfx/bgfx/include \
+#         -I${HG_SRC_DIR}/extern/bgfx/bimg/include \
+#         -o $DIST_DIR/harfang_cpptest.html app.cpp mdl_gles_fsb.cpp mdl_gles_vsb.cpp $LD_HARFANG
 
-lib=languages/hg_python/harfang.a
-LINKALL="$LINKALL ${HG}/$lib"
+#    fi
+
+
+    lib=languages/hg_python/harfang.a
+    LINKALL="$LINKALL ${HG}/$lib"
 
     echo "
 
