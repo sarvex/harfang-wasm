@@ -27,14 +27,14 @@ pushd $(pwd)/src
         git restore .
         git pull
     else
-        #git clone --no-tags --depth 1 --single-branch --branch wasm https://github.com/pmp-p/python-harfang3d-wasm harfang
         git clone --no-tags --depth 1 --single-branch --branch main https://github.com/harfang3d/harfang3d harfang
         pushd $(pwd)/harfang
         git submodule update --init --recursive
         git clone --depth 1 https://github.com/ejulien/FABGen fabgen
     fi
 
-    wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/20.diff | patch -p1
+    # https://github.com/harfang3d/harfang3d/pull/20 has been merged
+    # wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/20.diff | patch -p1
 
     export HG_SRC_DIR=$(pwd)
 
