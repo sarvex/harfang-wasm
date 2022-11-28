@@ -95,8 +95,8 @@ emcmake cmake $HG_SRC_DIR \
     -DPython3_Development.Embed_FOUND=TRUE \
 
 
-#
-if EMCC_CFLAGS="-DBX_CONFIG_DEBUG=0 -I${SDKROOT}/devices/emsdk/usr/include/python${PYBUILD} -Wno-unused-command-line-argument -lopenal" make -j4
+# cannot use -fno-exceptions
+if EMCC_CFLAGS="-sDISABLE_EXCEPTION_CATCHING=1 -fno-rtti -DBX_CONFIG_DEBUG=0 -I${SDKROOT}/devices/emsdk/usr/include/python${PYBUILD} -Wno-unused-command-line-argument -lopenal" make -j4
 then
     HG=$(pwd)
 
