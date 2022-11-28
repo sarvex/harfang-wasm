@@ -80,6 +80,14 @@ else
     pushd $(pwd)/pygame-wasm
 fi
 
+# test patches go here
+# ===================
+
+# patch -p1 <<END
+# END
+
+# ===================
+
 pwd
 env|grep PY
 
@@ -90,7 +98,7 @@ then
     #SDL_IMAGE="-s USE_SDL=2 -lfreetype -lwebp"
     SDL_IMAGE="-lSDL2 -lfreetype -lwebp"
 
-    export CFLAGS="-DHAVE_STDARG_PROTOTYPES -DBUILD_STATIC -DSDL_NO_COMPAT $SDL_IMAGE"
+    export CFLAGS="-DSDL_NO_COMPAT $SDL_IMAGE"
 
     EMCC_CFLAGS="-I${SDKROOT}/emsdk/upstream/emscripten/cache/sysroot/include/freetype2"
     EMCC_CFLAGS="$EMCC_CFLAGS -I$PREFIX/include/SDL2"
@@ -99,7 +107,7 @@ then
     EMCC_CFLAGS="$EMCC_CFLAGS -Wno-unreachable-code"
     EMCC_CFLAGS="$EMCC_CFLAGS -Wno-parentheses-equality"
     EMCC_CFLAGS="$EMCC_CFLAGS -Wno-unknown-pragmas"
-    export EMCC_CFLAGS="$EMCC_CFLAGS -ferror-limit=1 -fpic"
+    export EMCC_CFLAGS="$EMCC_CFLAGS -DHAVE_STDARG_PROTOTYPES -DBUILD_STATIC -ferror-limit=1 -fpic"
 
     export CC=emcc
 
@@ -127,7 +135,6 @@ then
         # to install python part (unpatched)
         cp -r src_py/. ${PKGDIR:-${SDKROOT}/prebuilt/emsdk/${PYBUILD}/site-packages/pygame/}
 
-
     else
         echo "ERROR: pygame configuration failed" 1>&2
         exit 109
@@ -141,7 +148,17 @@ fi
 popd
 popd
 
+TAG=${PYMAJOR}${PYMINOR}
 
+if [ -d testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten ]
+then
+
+    . ${SDKROOT}/emsdk/emsdk_env.sh
+
+    emcc -Os -g0 -shared -fpic -o \
+     testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten/pygame_static.cpython-${TAG}-wasm32-emscripten.so \
+     $SDKROOT/prebuilt/emsdk/libpygame${PYMAJOR}.${PYMINOR}.a
+fi
 
 
 

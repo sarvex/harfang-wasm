@@ -130,16 +130,21 @@ window.addEventListener('unhandledrejection', function(event) {
 //fileretrieve (binary). TODO: wasm compilation
 window.cross_file = function * cross_file(url, store) {
     var content = 0
+    var response = null
     console.log("cross_file.fetch", url )
     fetch(url, FETCH_FLAGS)
-        .then( response => {
+        .then( resp => {
+                response = resp
                 if (checkStatus(response))
                     response.arrayBuffer()
             })
         .then( buffer => content = new Uint8Array(buffer) )
         .catch(x => response.error = new Error(x) )
 
-    while (!content && !response.error)
+    while (response === null)
+        yield content
+
+    while (!content && !response.error )
         yield content
 
     if (response.error)
@@ -1535,7 +1540,7 @@ MM.set_volume = function get_volume(trackid, vol) {
 
 
 window.chromakey = function(context, r,g,b, tolerance, alpha) {
-    context = canvas.getContext('2d');
+    context = canvas.getContext('2d', { willReadFrequently: true } );
 
     var imageData = context.getImageData(0, 0, canvas.width, canvas.height);
     var data = imageData.data;

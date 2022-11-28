@@ -30,7 +30,8 @@ echo "
             SDKROOT=$SDKROOT
             PYTHONPYCACHEPREFIX=$PYTHONPYCACHEPREFIX
             HPY=$HPY
-"
+            LD_VENDOR=$LD_VENDOR
+" 1>&2
 
 
 # SDL2_image turned off : -ltiff
@@ -173,6 +174,16 @@ PYDIR=${SDKROOT}/devices/emsdk/usr/include/python${PYBUILD}
 
 # gnu99 not c99 for EM_ASM() js calls functions.
 
+if $STATIC
+then
+    echo "building static loader"
+else
+    echo "building dynamic loader"
+    export PACKAGES="emsdk"
+    export LD_VENDOR="-sUSE_WEBGL2"
+fi
+
+
 for lib in $PACKAGES
 do
     CPY_CFLAGS="$CPY_CFLAGS -DPYDK_$lib=1"
@@ -220,7 +231,11 @@ then
         LDFLAGS="$LDFLAGS $cpylib"
     done
 
-    echo LDFLAGS=$LDFLAGS
+    echo "
+
+     LDFLAGS=$LDFLAGS
+
+    " 1>&2
 
     if emcc $FINAL_OPTS $LOPTS -std=gnu99 -D__PYDK__=1 -DNDEBUG\
      -s TOTAL_MEMORY=256MB -s ALLOW_TABLE_GROWTH -sALLOW_MEMORY_GROWTH \
