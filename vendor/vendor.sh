@@ -1,3 +1,4 @@
-export PACKAGES="pygame harfang"
+export PACKAGES=${PACKAGES:-"emsdk harfang"}
 export VENDOR=harfang
-export LD_VENDOR="-sUSE_WEBGL2"
+export LD_VENDOR="-sUSE_WEBGL2 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES2 -sFULL_ES3" 
+# -sLEGACY_GL_EMULATION"

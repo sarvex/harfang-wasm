@@ -100,9 +100,6 @@ if EMCC_CFLAGS="-DBX_CONFIG_DEBUG=0 -I${SDKROOT}/devices/emsdk/usr/include/pytho
 then
     HG=$(pwd)
 
-
-
-
     LINKALL=""
 
     for lib in $(find ${HG}/extern| grep lib.*.a$|grep -v stb_vorbis)
@@ -157,6 +154,7 @@ Into : ${SDKROOT}/prebuilt/emsdk/libharfang${PYBUILD}.a
 
     du -hs ${SDKROOT}/prebuilt/emsdk/libharfang${PYBUILD}.a
 
+
 else
     echo build failed
     exit 66
@@ -164,7 +162,23 @@ fi
 
 popd
 
+if [ -d testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten ]
+then
+    emcc -Os -g0 -shared -fpic -o testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
+    [ -f testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
+    pushd testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten
+    if [ -d /data/git/archives/repo ]
+    then
+        whl=/data/git/archives/repo/pkg/$(basename $(pwd)).whl
+    else
+        mkdir build/web/archives/repo/pkg
+        whl=build/web/archives/repo/pkg/$(basename $(pwd)).whl
+    fi
+    [ -f $whl ] && rm $whl
+    zip $whl -r .
+    popd
 
+fi
 
 
 
