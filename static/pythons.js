@@ -1,6 +1,9 @@
 "use strict";
 
+const module_name = "pythons.js"
+
 var config
+
 
 const FETCH_FLAGS = {
     mode:"no-cors",
@@ -134,13 +137,13 @@ window.addEventListener('unhandledrejection', function(event) {
 })
 
 
-
 //fileretrieve (binary). TODO: wasm compilation
-window.cross_file = function * cross_file(url, store) {
+window.cross_file = function * cross_file(url, store, flags) {
+    cross_file.dlcomplete = 1
     var content = 0
     var response = null
-    console.log("cross_file.fetch", url )
-    fetch(url, FETCH_FLAGS)
+    console.log("cross_file.fetch", url, flags || FETCH_FLAGS )
+    fetch(url, flags || FETCH_FLAGS)
         .then( resp => {
                 response = resp
                 if (checkStatus(resp))
@@ -152,8 +155,12 @@ window.cross_file = function * cross_file(url, store) {
     while (!response)
         yield content
 
+    console.warn("got response", response, "len", response.headers.get("Content-Length"))
+
     while (!content && !response.error )
         yield content
+
+    //console.warn("got content or error", content || response.error)
 
     if (response.error) {
         console.error("cross_file:", response.error)
@@ -162,8 +169,33 @@ window.cross_file = function * cross_file(url, store) {
 
     FS.writeFile(store, content )
     console.log("cross_file.fetch", store, "r/w=", content.byteLength )
+    cross_file.dlcomplete = content.byteLength
     yield store
 }
+
+
+
+
+window.cross_dl = async function cross_dl(url, flags) {
+    console.log("cross_dl.fetch", url, flags || FETCH_FLAGS )
+    const response = await fetch(url, flags || FETCH_FLAGS )
+    checkStatus(response)
+    console.log("cross_dl len=", response.headers.get("Content-Length") )
+    console.log("cross_dl.error", response.error )
+    if (response.body) {
+        console.log("cross_dl.text", await response.text() )
+        /*
+        const reader = response.body.getReader();
+        const text = await reader.read();
+        console.log("cross_dl.text", text )
+        */
+    } else {
+        console.error("cross_dl: no body")
+    }
+}
+
+
+
 
 
 //urlretrieve
@@ -419,18 +451,21 @@ const vm = {
 
         preRun : [ prerun ],
         postRun : [ function (VM) {
+            VM["websocket"]["url"] = "wss://"
             window.python = VM
             window.py = new bridge(VM)
             setTimeout(custom_postrun, 10)
+
         } ]
 }
 
 
 function run_pyrc(content) {
     const pyrc_file = "/data/data/org.python/assets/pythonrc.py"
-    FS.writeFile(pyrc_file, content )
 
+// TODO: concat blocks
     vm.FS.writeFile( "/data/data/org.python/assets/main.py" , vm.script.blocks[0] )
+    vm.FS.writeFile(pyrc_file, content )
 
     python.PyRun_SimpleString(`#!site
 PyConfig = json.loads("""${JSON.stringify(python.PyConfig)}""")
@@ -447,6 +482,8 @@ if os.path.isdir(PyConfig['prefix']):
     os.chdir(PyConfig['prefix'])
 
 fn = "${pyrc_file}"
+
+print("fixme async exec")
 
 if os.path.isfile(fn):
     exec(open(fn).read(), globals(), globals())
@@ -471,6 +508,8 @@ async function custom_postrun() {
     const pyrc_url = vm.config.cdn + "pythonrc.py"
     var content = 0
     console.log("cross_file.fetch", pyrc_url )
+
+
     fetch(pyrc_url, {})
         .then( response => checkStatus(response) && response.arrayBuffer() )
         .then( buffer => run_pyrc(new Uint8Array(buffer)) )
@@ -858,6 +897,573 @@ function feat_snd() {
         MM_play( {auto:1, test:1, media: new Audio(config.cdn+"empty.ogg")} , 1)
 }
 
+// ============================== event queue =============================
+
+window.EQ = []
+
+
+function queue_event(evname, data) {
+    const jsdata = JSON.stringify(data)
+    EQ.push( { name : evname, data : jsdata} )
+
+    if (window.python && window.python.is_ready) {
+        while (EQ.length>0) {
+            const ev = EQ.shift()
+            python.PyRun_SimpleString(`#!
+__EMSCRIPTEN__.EventTarget.build('${ev.name}', '''${ev.data}''')
+`)
+        }
+    } else {
+        console.warn(`Event "${evname}" queued : too early`)
+    }
+}
+
+
+// =============================  media manager ===========================
+
+function download(diskfile, filename) {
+    if (!filename)
+        filename = diskfile.rsplit("/").pop()
+
+    const blob = new Blob([FS.readFile(diskfile)])
+    const elem = window.document.createElement('a');
+    elem.href = window.URL.createObjectURL(blob, { oneTimeOnly: true });
+    elem.download = filename;
+    document.body.appendChild(elem);
+    elem.click();
+    document.body.removeChild(elem);
+}
+
+window.MM = { tracks : 0, UME : true, download : download }
+
+async function media_prepare(trackid) {
+    const track = MM[trackid]
+
+    await _until(defined)("avail", track)
+
+    if (track.type === "audio") {
+        //console.log(`audio ${trackid}:${track.url} ready`)
+    }
+
+    if (track.type === "fs") {
+        console.log(`fs ${trackid}:${track.url} => ${track.path} ready`)
+    }
+
+    if (track.type === "mount") {
+        // async
+        MM[trackid].media = vm.BFS.Buffer.from( MM[trackid].data )
+
+        track.mount.path = track.mount.path || '/' //??=
+
+        const hint = `${track.mount.path}@${track.mount.point}:${trackid}`
+
+        function apk_cb(e, apkfs){
+            console.log(__FILE__, "930 mounting", hint, "onto", track.mount.point)
+
+            BrowserFS.FileSystem.InMemory.Create(
+                function(e, memfs) {
+                    BrowserFS.FileSystem.OverlayFS.Create({"writable" :  memfs, "readable" : apkfs },
+                        function(e, ovfs) {
+                            BrowserFS.FileSystem.MountableFileSystem.Create({
+                                '/' : ovfs
+                                }, async function(e, mfs) {
+                                    await BrowserFS.initialize(mfs);
+                                    await vm.FS.mount(vm.BFS, {root: track.mount.path}, track.mount.point );
+                                    setTimeout(()=>{track.ready=true}, 0)
+                                })
+                        }
+                    );
+                }
+            );
+        }
+
+        await BrowserFS.FileSystem.ZipFS.Create(
+            {"zipData" : track.media, "name": hint},
+            apk_cb
+        )
+    }
+}
+
+
+function MM_play(track, loops) {
+    const media = track.media
+    track.loops = loops
+    const prom = track.media.play()
+    if (prom){
+        prom.then(() => {
+            // ME ok play started
+            MM.UME = true
+        }).catch(error => {
+            // Media engagement required
+            MM.UME = false
+            console.error(`** MEDIA USER ACTION REQUIRED [${track.test}] **`)
+            if (track.test && track.test>0) {
+                track.test += 1
+                setTimeout(MM_play, 1000, track, loops)
+            }
+
+        });
+    }
+}
+
+
+
+function MM_autoevents(track) {
+    const media = track.media
+
+    if (media.MM_autoevents) {
+        return
+    }
+
+    media.addEventListener("canplaythrough", (event) => {
+        track.ready = true
+        if (track.auto)
+            media.play()
+    })
+
+    media.addEventListener('ended', (event) => {
+        if (track.loops<0)
+            media.play()
+
+        if (track.loops>0) {
+            track.loops--;
+            media.play()
+        }
+    })
+}
+
+
+window.cross_track = async function cross_track(trackid, url, flags) {
+    var response = await fetch(url, flags || FETCH_FLAGS);
+
+    checkStatus(response)
+
+    const reader = response.body.getReader();
+
+    const len = +response.headers.get("Content-Length");
+    const track = MM[trackid]
+
+    // concatenate chunks into single Uint8Array
+    track.data = new Uint8Array(len);
+    track.pos = 0
+    track.len = len
+
+    console.warn(url, track.len)
+
+    while(true) {
+        const {done, value} = await reader.read()
+
+        if (done) {
+            track.avail = true
+            break
+        }
+        try {
+            track.data.set(value, track.pos)
+        } catch (x) {
+            track.pos = -1
+            console.error("1396: cannot download", url)
+        }
+
+        track.pos += value.length
+
+        //console.log(`${trackid}:${url} Received ${track.pos} of ${track.len}`)
+    }
+
+    console.log(`${trackid}:${url} Received ${track.pos} of ${track.len} to ${track.path}`)
+    if (track.type === "fs" ) {
+        FS.writeFile(track.path, track.data)
+    }
+
+}
+
+
+MM.prepare = function prepare(url, cfg) {
+    MM.tracks++;
+    const trackid = MM.tracks
+    var audio
+
+    cfg = JSON.parse(cfg)
+
+
+    const transport = cfg.io || 'packed'
+    const type = cfg.type || 'fs'
+
+    MM[trackid] = { ...cfg, ...{
+            "trackid": trackid,
+            "type"  : type,
+            "url"   : url,
+            "error" : false,
+            "len"   : 0,
+            "pos"   : 0,
+            "io"    : transport,
+            "ready" : undefined,
+            "auto"  : false,
+            "avail" : undefined,
+            "media" : undefined,
+            "data"  : undefined
+        }
+    }
+    const track = MM[trackid]
+
+//console.log("MM.prepare", trackid, transport, type)
+
+    if (transport === 'fs') {
+        if ( type === "audio" ) {
+            const blob = new Blob([FS.readFile(track.url)])
+            audio = new Audio(URL.createObjectURL(blob,  { oneTimeOnly: true }))
+            track.avail = true
+        } else {
+            console.error("fs transport is only for audio", JSON.stringify(track))
+            track.error = true
+            return track
+        }
+    }
+
+    if (transport === "url" ) {
+        // audio tag can download itself
+        if ( type === "audio" ) {
+            audio = new Audio(url)
+            track.avail = true
+        } else {
+console.log("MM.cross_track", trackid, transport, type, url )
+            cross_track(trackid, url, {} )
+        }
+    }
+
+
+    if (audio) {
+        track.media = audio
+
+        track.set_volume = (v) => { track.media.volume = 0.0 + v }
+        track.get_volume = () => { return track.media.volume }
+        track.stop = () => { track.media.pause() }
+
+        track.play = (loops) => { MM_play( track, loops) }
+
+        MM_autoevents(track)
+
+    }
+
+//console.log("MM.prepare", url,"queuing as",trackid)
+    media_prepare(trackid)
+//console.log("MM.prepare", url,"queued as",trackid)
+    return track
+}
+
+
+MM.load = function load(trackid, loops) {
+// loops =0 play once, loops>0 play number of time, <0 loops forever
+    const track = MM[trackid]
+
+    loops = loops || 0 //??=
+    track.loops = loops
+
+    if (!track.avail) {
+        // FS not ready
+        console.error("981 TODO: bounce with setTimeout")
+        return 0
+    }
+
+
+    if (track.type === "audio") {
+        MM_autoevents( track )
+        return trackid
+    }
+
+    if (track.type === "mount") {
+        const mount = track
+        console.log(track.mount.point , track.mount.path, trackid )
+        mount_ab( track.data , track.mount.point , track.mount.path, trackid )
+        return trackid
+    }
+// unsupported type
+    return -1
+}
+
+
+MM.play = function play(trackid, loops, start, fade_ms) {
+    console.log("MM.play",trackid, loops, MM[trackid] )
+    const track = MM[trackid]
+    track.loops = loops
+    if (track.ready)
+        track.media.play()
+    else {
+        console.warn("Cannot play before user interaction, will retry", track )
+        function play_asap() {
+            if (track.ready) {
+                track.media.play()
+            } else {
+                setTimeout(play_asap, 500)
+            }
+        }
+        play_asap()
+    }
+}
+
+MM.stop = function stop(trackid) {
+    console.log("MM.stop", trackid, MM[trackid] )
+    MM[trackid].media.currentTime = 0
+    MM[trackid].media.pause()
+}
+
+
+MM.pause = function pause(trackid) {
+    console.log("MM.pause", trackid, MM[trackid] )
+    MM[trackid].media.pause()
+}
+
+MM.set_volume = function set_volume(trackid, vol) {
+    MM[trackid].media.volume = 1 * vol
+}
+
+MM.set_volume = function get_volume(trackid, vol) {
+    return MM[trackid].media.volume
+}
+
+MM.set_socket = function set_socket(mode) {
+    vm["websocket"]["url"] = mode
+    console.log("WebSocket default mode is now :", mode)
+}
+
+window.chromakey = function(context, r,g,b, tolerance, alpha) {
+    context = canvas.getContext('2d', { willReadFrequently: true } );
+
+    var imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+    var data = imageData.data;
+
+    r = r || data[0]
+    g = g || data[1]
+    b = b || data[2]
+    tolerance = tolerance || 255;
+    tolerance -= 255
+    alpha = alpha || 0
+
+
+
+    for(var i = 0, n = data.length; i < n; i += 4) {
+        var diff = Math.abs(data[i] - r) + Math.abs(data[i+1] - g) + Math.abs(data[i+2] - b);
+        if(diff <= tolerance) {
+            data[i + 3] = alpha;
+        }
+    }
+    context.putImageData(imageData, 0, 0);
+}
+
+
+window.mobile_check = function() {
+    let check = false;
+    (   function(a){
+        if(/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(a)||/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0,4)))
+            check = true;
+        }
+    )(navigator.userAgent||navigator.vendor||window.opera);
+    return check;
+}
+
+window.mobile_tablet = function() {
+    let check = false;
+    (   function(a){
+        if(/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(a)||/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0,4)))
+            check = true;
+        }
+    )(navigator.userAgent||navigator.vendor||window.opera);
+    return check;
+}
+
+window.mobile = () => {
+    try {
+        return navigator.userAgentData.mobile
+    } catch (x) {
+        console.warn("FIXME:", x)
+    }
+
+    return mobile_check()
+}
+
+
+if (navigator.connection) {
+    if ( navigator.connection.type === 'cellular' ) {
+        console.warn("Connection:","Cellular")
+        if ( navigator.connection.downlinkMax <= 0.115) {
+            console.warn("Connection:","2G")
+        }
+    } else {
+        console.warn("Connection:","Wired")
+    }
+}
+
+
+
+//TODO: battery
+    // https://developer.mozilla.org/en-US/docs/Web/API/BatteryManager/levelchange_event
+
+//TODO: camera+audio cap
+    //https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Permissions_API
+    //https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Feature-Policy/camera
+
+// https://developer.mozilla.org/en-US/docs/Web/API/Accelerometer
+
+// https://developer.mozilla.org/en-US/docs/Web/API/AmbientLightSensor
+
+
+
+window.debug = function () {
+    vm.config.debug = true
+    const debug_hidden =  false
+    try {
+        window.custom_onload(debug_hidden)
+
+    } catch (x) {
+        console.error("using debug UI default, because no custom_onload or failure")
+        for (const e of ["pyconsole","system","iframe","transfer","info","box","terminal"] ) {
+            if (window[e])
+                window[e].hidden = debug_hidden
+        }
+    }
+    vm.PyRun_SimpleString(`#!
+shell.uptime()
+`)
+    window_resize()
+}
+
+
+window.blob = function blob(filename) {
+    console.warn(__FILE__, "1620: TODO: revoke blob url")
+    return URL.createObjectURL( new Blob([FS.readFile(filename)],  { oneTimeOnly: true }))
+}
+
+/*
+function rpc_handler(emsg, url, line) {
+    if ( (line == 1) && (emsg.search(': py.')>0)){
+        console.log('msg', emsg, 'url', url, 'line', line)
+        return true
+    }
+    return false
+}
+
+window.addEventListener("error", rpc_handler )
+*/
+
+window.rpc = { path : [], call : "", argv : [] }
+
+function bridge(host) {
+    const pybr = new Proxy(function () {}, {
+    get(_, k, receiver) {
+        rpc.path.push(k)
+        return pybr
+    },
+    apply(_, o, argv) {
+        const call = rpc.path.join(".")
+        if (host === window.python) {
+// TODO: rpc id / event serialisation
+            queue_event("rpc", { "call": call, "argv" : argv, "rpcid": window.event} )
+        } else {
+            window.rpc.call = call
+            window.rpc.argv = Array.from(argv)
+            if (!argv.length) {
+                console.error("event should always be first param")
+                window.rpc.argv.unshift(window.event)
+            } else if (argv.length>0 && (window.event!==argv[0])) {
+                console.error("event should always be first param")
+                window.rpc.argv.unshift(window.event)
+            }
+            host.click()
+        }
+        rpc.path.length=0
+    }
+  });
+  return pybr
+}
+
+
+
+
+window.Fetch = {}
+
+// generator functions for async fetch API
+// script is meant to be run at runtime in an emscripten environment
+
+// Fetch API allows data to be posted along with a POST request
+window.Fetch.POST = function * POST (url, data, flags)
+{
+    // post info about the request
+    console.log("POST: " + url + "\nData: " + data);
+    var request = new Request(url, {method: 'POST', body: JSON.stringify(data)})
+    var content = 'undefined';
+    fetch(request, flags || {})
+   .then(resp => resp.text())
+   .then((resp) => {
+        console.log(resp);
+        content = resp;
+   })
+   .catch(err => {
+         // handle errors
+         console.log("An Error Occurred:")
+         console.log(err);
+    });
+
+    while(content == 'undefined'){
+        yield content;
+    }
+}
+
+// Only URL to be passed
+// when called from python code, use urllib.parse.urlencode to get the query string
+window.Fetch.GET = function * GET (url, flags)
+{
+    console.log("GET: " + url);
+    var request = new Request(url, { method: 'GET' })
+    var content = 'undefined';
+    fetch(request, flags || {})
+   .then(resp => resp.text())
+   .then((resp) => {
+        console.log(resp);
+        content = resp;
+   })
+   .catch(err => {
+         // handle errors
+         console.log("An Error Occurred:");
+         console.log(err);
+    });
+
+    while(content == 'undefined'){
+        // generator
+        yield content;
+    }
+}
+
+
+// ====================================================================================
+//          pyodide compat layer
+// ====================================================================================
+
+
+window.loadPyodide =
+    async function loadPyodide(cfg) {
+        vm.runPython =
+            function runPython(code) {
+                console.warn("runPython N/I", code)
+                vm.PyRun_SimpleString(code)
+                return 'N/A'
+            }
+
+        console.warn("loadPyodide N/I")
+        auto_start(cfg)
+        auto_start = null
+        await onload()
+        onload = null
+        await _until(defined)("python")
+        vm.vt.xterm.write = cfg.stdout
+        console.warn("using ", python)
+        return vm
+    }
+
+// ====================================================================================
+//          STARTUP
+// ====================================================================================
+
 async function onload() {
     var debug_hidden = true;
 
@@ -1027,738 +1633,228 @@ async function onload() {
 
 }
 
+function auto_conf(cfg) {
+    var url = cfg.url
 
-
-
-
-window.busy = 1
-
-window.addEventListener("load", onload )
-
-
-
-
-for (const script of document.getElementsByTagName('script')) {
-    const main = "pythons.js"
-    if (script.type == 'module') {
-        if (  script.src.search(main) >=0 ) {
-
-            var url = script.src
+    console.log("AUTOSTART", url, document.location.href, cfg.stdout)
+    if (document.currentScript) {
+        if (document.currentScript.async) {
+            console.log("Executing asynchronously", document.currentScript.src);
+        } else {
+            console.log("Executing synchronously");
+        }
+    }
 
 console.log("pythons found at", url )
 
-            const old_url = url
+    const old_url = url
 
-            var elems
+    var elems
 
-            elems = url.rsplit('#',1)
-            url = elems.shift()
+    elems = url.rsplit('#',1)
+    url = elems.shift()
 
 
 
-            elems = url.rsplit('?',1)
-            url = elems.shift()
+    elems = url.rsplit('?',1)
+    url = elems.shift()
 
 console.warn("TODO: merge/replace location options over script options")
 
-            if (script.src.endsWith(main)) {
-                url = url + (window.location.search || "?") + ( window.location.hash || "#" )
-                console.log("Location taking precedence over script", old_url ,'=>', url )
-            }
+    if (url.endsWith(module_name)) {
+        url = url + (window.location.search || "?") + ( window.location.hash || "#" )
+        console.log("Location taking precedence over script", old_url ,'=>', url )
+    }
 
-            elems = url.rsplit('#',1)
+    elems = url.rsplit('#',1)
 console.log("pythons found at", url , elems)
-            url = elems.shift()
+    url = elems.shift()
 
-            if (elems.length)
-                for (const arg of elems.pop().split("%20") ) {
-                   vm.sys_argv.push(decodeURI(arg))
-                }
+    if (elems.length)
+        for (const arg of elems.pop().split("%20") ) {
+           vm.sys_argv.push(decodeURI(arg))
+        }
 
-            elems = url.rsplit('?',1)
+    elems = url.rsplit('?',1)
 console.log("pythons found at", url , elems)
-            url = elems.shift()
+    url = elems.shift()
 console.log("pythons found at", url , elems)
 
-            if (elems.length)
-                for (const arg of elems.pop().split("&")) {
-                    vm.cpy_argv.push(decodeURI(arg))
-                }
+    if (elems.length)
+        for (const arg of elems.pop().split("&")) {
+            vm.cpy_argv.push(decodeURI(arg))
+        }
 
 
-            var code
+    var code = ""
 
-            if (script.text.length) {
-                code = script.text
-            } else {
-                console.warn("888: no inlined code found")
-            }
+    if (!cfg.module && cfg.text.length) {
+        code = cfg.text
+    } else {
+        console.warn("1601: no inlined code found")
+    }
 
-            // default
-            vm.script.interpreter = "cpython"
+    // default
+    vm.script.interpreter = "cpython"
 
-            if (vm.cpy_argv.length) {
-                var orig_argv_py
-                if ( vm.cpy_argv[0].search('cpython3')>=0 || vm.cpy_argv[0].search('wapy')>=0 )
-                    orig_argv_py = vm.script.interpreter
-                vm.script.interpreter = orig_argv_py || script.dataset.python || vm.script.interpreter
-                console.log("no python implementation specified, using default :",vm.script.interpreter)
-            }
+    if (vm.cpy_argv.length) {
+        var orig_argv_py
+        if ( vm.cpy_argv[0].search('cpython3')>=0 || vm.cpy_argv[0].search('wapy')>=0 )
+            orig_argv_py = vm.script.interpreter
+        vm.script.interpreter = orig_argv_py || config.python || vm.script.interpreter
+        console.log("no python implementation specified, using default :",vm.script.interpreter)
+    }
 
-            // running pygbag proxy or lan testing ?
-            if (location.hostname === "localhost") {
-                config.cdn = script.src.split("?",1)[0].replace(main,"")
-            }
+    // running pygbag proxy, lan testing or a module url ?
+    if ( (location.hostname === "localhost") || cfg.module) {
+        config.cdn = url.split("?",1)[0].replace(module_name, "")
+    }
 
+    config.cdn     = config.cdn || url.split(module_name, 1)[0]  //??=
+    config.xtermjs = config.xtermjs || 0
 
+    config.archive = config.archive || (location.search.search(".apk")>=0)  //??=
 
-            config.cdn     = config.cdn || script.src.split(main,1)[0]  //??=
-            config.xtermjs = config.xtermjs || 0
-
-config.archive = config.archive || (location.search.search(".apk")>=0)  //??=
-
-            config.debug = config.debug || (location.hash.search("#debug")>=0) //??=
+    config.debug = config.debug || (location.hash.search("#debug")>=0) //??=
 
 //FIXME: debug should force -i or just display vt ?
 config.interactive = config.interactive || (location.search.search("-i")>=0) //??=
 
-            config.gui_debug = config.gui_debug ||  2  //??=
+    config.gui_debug = config.gui_debug ||  2  //??=
 
-            if (script.id == "__main__")
-                config.autorun = 1
+    if (config.id == "__main__")
+        config.autorun = 1
 
-            config.quiet = false
-            config.can_close = config.can_close || 0
-            config.autorun  = config.autorun || 0 //??=
-            config.features = config.features || script.dataset.src.split(",") //??=
+    config.quiet = false
+    config.can_close = config.can_close || 0
+    config.autorun  = config.autorun || 0 //??=
+    config.features = config.features || cfg.os.split(",") //??=
 // TODO wapy is not versionned
-            config.PYBUILD  = config.PYBUILD || vm.script.interpreter.substr(7) || "3.11" //??=
-            config._sdl2    = config._sdl2 || "canvas" //??=
+    config.PYBUILD  = config.PYBUILD || vm.script.interpreter.substr(7) || "3.11" //??=
+    config._sdl2    = config._sdl2 || "canvas" //??=
 
-            if (config.ume_block === undefined)
-                config.ume_block || true //??=
+    if (config.ume_block === undefined)
+        config.ume_block || true //??=
 
-            config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
-            config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
+    config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
+    config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
 
-            // https://docs.python.org/3/c-api/init_config.html#initialization-with-pyconfig
+    // https://docs.python.org/3/c-api/init_config.html#initialization-with-pyconfig
 
-            // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.run_module
-            // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.bytes_warning
-            // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.program_name ( PYTHONEXECUTABLE )
+    // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.run_module
+    // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.bytes_warning
+    // TODO: https://docs.python.org/3/c-api/init_config.html#c.PyConfig.program_name ( PYTHONEXECUTABLE )
 
-            vm.PyConfig = JSON.parse(`
-                {
-                    "isolated" : 0,
-                    "parse_argv" : 0,
-                    "quiet" : 0,
-                    "run_filename" : "main.py",
-                    "write_bytecode" : 0,
-                    "skip_source_first_line" : 1,
-                    "bytes_warning" : 1,
-                    "base_executable" : null,
-                    "base_prefix" : null,
-                    "buffered_stdio" : null,
-                    "bytes_warning" : 0,
-                    "warn_default_encoding" : 0,
-                    "code_debug_ranges" : 1,
-                    "check_hash_pycs_mode" : "default",
-                    "configure_c_stdio" : 1,
-                    "dev_mode" : -1,
-                    "dump_refs" : 0,
-                    "exec_prefix" : null,
-                    "executable" : "${config.executable}",
-                    "faulthandler" : 0,
-                    "filesystem_encoding" : "utf-8",
-                    "filesystem_errors" : "surrogatepass",
-                    "use_hash_seed" : 1,
-                    "hash_seed" : 1,
-                    "home": null,
-                    "import_time" : 0,
-                    "inspect" : 1,
-                    "install_signal_handlers" :0 ,
-                    "interactive" : ${config.interactive},
-                    "legacy_windows_stdio":0,
-                    "malloc_stats" : 0 ,
-                    "platlibdir" : "lib",
-                    "prefix" : "/data/data/org.python/assets/site-packages",
-                    "ps1" : ">>> ",
-                    "ps2" : "... "
-                }`)
+    vm.PyConfig = JSON.parse(`
+        {
+            "isolated" : 0,
+            "parse_argv" : 0,
+            "quiet" : 0,
+            "run_filename" : "main.py",
+            "write_bytecode" : 0,
+            "skip_source_first_line" : 1,
+            "bytes_warning" : 1,
+            "base_executable" : null,
+            "base_prefix" : null,
+            "buffered_stdio" : null,
+            "bytes_warning" : 0,
+            "warn_default_encoding" : 0,
+            "code_debug_ranges" : 1,
+            "check_hash_pycs_mode" : "default",
+            "configure_c_stdio" : 1,
+            "dev_mode" : -1,
+            "dump_refs" : 0,
+            "exec_prefix" : null,
+            "executable" : "${config.executable}",
+            "faulthandler" : 0,
+            "filesystem_encoding" : "utf-8",
+            "filesystem_errors" : "surrogatepass",
+            "use_hash_seed" : 1,
+            "hash_seed" : 1,
+            "home": null,
+            "import_time" : 0,
+            "inspect" : 1,
+            "install_signal_handlers" :0 ,
+            "interactive" : ${config.interactive},
+            "legacy_windows_stdio":0,
+            "malloc_stats" : 0 ,
+            "platlibdir" : "lib",
+            "prefix" : "/data/data/org.python/assets/site-packages",
+            "ps1" : ">>> ",
+            "ps2" : "... "
+        }`)
 
-            vm.PyConfig.argv = vm.sys_argv
-            vm.PyConfig.orig_argv = vm.cpy_argv
+    vm.PyConfig.argv = vm.sys_argv
+    vm.PyConfig.orig_argv = vm.cpy_argv
 
-            for (const prop in config)
-                console.log(`config.${prop} =`, config[prop] )
+    for (const prop in config)
+        console.log(`config.${prop} =`, config[prop] )
 
-            console.log('interpreter=', vm.script.interpreter)
-            console.log('orig_argv', vm.PyConfig.orig_argv)
-            console.log('sys.argv: ' , vm.PyConfig.argv)
-            console.log('url=', url)
-            console.log('src=', script.src)
-            console.log('data-src=', script.dataset.src)
-            console.log('data-python=', script.dataset.python)
-            console.log('script: id=', script.id)
-            console.log('code : ' , code.length, ` as ${script.id}.py`)
-            vm.config = config
+    console.log('interpreter=', vm.script.interpreter)
+    console.log('orig_argv', vm.PyConfig.orig_argv)
+    console.log('sys.argv: ' , vm.PyConfig.argv)
+    console.log('docurl=', document.location.href)
+    console.log('srcurl=', url)
+    if (!cfg.module) {
+        console.log('data-os=', config.os)
+        console.log('data-python=', config.python)
+        console.log('script: id=', config.id)
+        console.log('code : ' , code.length, ` as ${config.id}.py`)
+    }
+    vm.config = config
+}
 
-// TODO remote script
-            if (config.autorun)
-                code = code + `
-if sys.platform in ('emscripten','wasi'):
-    embed.run()`
 
-            vm.script.blocks = [ code ]
-
-// TODO scripts argv ( sys.argv )
-
-            // only one script tag for now
-            break
-        }
+function auto_start(cfg) {
+    window.busy = 1
+    if (cfg) {
+        console.error("not using python script tags")
+        cfg.os = "gui"
+        //config.id = "__main__"
+        cfg.module = true
+        auto_conf(cfg)
+        vm.script.blocks = [ "print(' - Pygbag runtime -')" ]
     } else {
-        console.log("script?", script.type, script.id, script.src, script.text )
-    }
-}
-
-for (const script of document.getElementsByTagName('script')) {
-    //TODO: process py-script brython whatever and push to vm.script.blocks
-    // for concat with vm.FS.writeFile
-}
-
-
-
-// ============================== event queue =============================
-
-window.EQ = []
-
-
-function queue_event(evname, data) {
-    const jsdata = JSON.stringify(data)
-    EQ.push( { name : evname, data : jsdata} )
-
-    if (window.python && window.python.is_ready) {
-        while (EQ.length>0) {
-            const ev = EQ.shift()
-            python.PyRun_SimpleString(`#!
-__EMSCRIPTEN__.EventTarget.build('${ev.name}', '''${ev.data}''')
-`)
-        }
-    } else {
-        console.warn(`Event "${evname}" queued : too early`)
-    }
-}
-
-
-// =============================  media manager ===========================
-
-function download(diskfile, filename) {
-    if (!filename)
-        filename = diskfile.rsplit("/").pop()
-
-    const blob = new Blob([FS.readFile(diskfile)])
-    const elem = window.document.createElement('a');
-    elem.href = window.URL.createObjectURL(blob);
-    elem.download = filename;
-    document.body.appendChild(elem);
-    elem.click();
-    document.body.removeChild(elem);
-}
-
-window.MM = { tracks : 0, UME : true, download : download }
-
-async function media_prepare(trackid) {
-    const track = MM[trackid]
-
-    await _until(defined)("avail", track)
-
-    if (track.type === "audio") {
-        //console.log(`audio ${trackid}:${track.url} ready`)
-    }
-
-    if (track.type === "fs") {
-        console.log(`fs ${trackid}:${track.url} => ${track.path} ready`)
-    }
-
-    if (track.type === "mount") {
-        // async
-        MM[trackid].media = vm.BFS.Buffer.from( MM[trackid].data )
-
-        track.mount.path = track.mount.path || '/' //??=
-
-        const hint = `${track.mount.path}@${track.mount.point}:${trackid}`
-
-        function apk_cb(e, apkfs){
-            console.log(__FILE__, "930 mounting", hint, "onto", track.mount.point)
-
-            BrowserFS.FileSystem.InMemory.Create(
-                function(e, memfs) {
-                    BrowserFS.FileSystem.OverlayFS.Create({"writable" :  memfs, "readable" : apkfs },
-                        function(e, ovfs) {
-                            BrowserFS.FileSystem.MountableFileSystem.Create({
-                                '/' : ovfs
-                                }, async function(e, mfs) {
-                                    await BrowserFS.initialize(mfs);
-                                    await vm.FS.mount(vm.BFS, {root: track.mount.path}, track.mount.point );
-                                    setTimeout(()=>{track.ready=true}, 0)
-                                })
-                        }
-                    );
+        for (const script of document.getElementsByTagName('script')) {
+            if ( (script.type == 'module') && (script.src.search(module_name) >= 0)){
+                const code = script.text
+                cfg = {
+                    module : false,
+                    python : script.dataset.python,
+                    url : script.src,
+                    os : script.dataset.os,
+                    text : code,
+                    id : script.id,
+                    autorun : ""
                 }
-            );
-        }
 
-        await BrowserFS.FileSystem.ZipFS.Create(
-            {"zipData" : track.media, "name": hint},
-            apk_cb
-        )
-    }
-}
+                window.addEventListener("load", onload )
+                auto_conf(cfg)
 
+                if (vm.config.autorun)
+                    code = code + `
+    if sys.platform in ('emscripten','wasi'):
+        embed.run()
+`
 
-function MM_play(track, loops) {
-    const media = track.media
-    track.loops = loops
-    const prom = track.media.play()
-    if (prom){
-        prom.then(() => {
-            // ME ok play started
-            MM.UME = true
-        }).catch(error => {
-            // Media engagement required
-            MM.UME = false
-            console.error(`** MEDIA USER ACTION REQUIRED [${track.test}] **`)
-            if (track.test && track.test>0) {
-                track.test += 1
-                setTimeout(MM_play, 1000, track, loops)
-            }
+                vm.script.blocks = [ code ]
 
-        });
-    }
-}
-
-
-
-function MM_autoevents(track) {
-    const media = track.media
-
-    if (media.MM_autoevents) {
-        return
-    }
-
-    media.addEventListener("canplaythrough", (event) => {
-        track.ready = true
-        if (track.auto)
-            media.play()
-    })
-
-    media.addEventListener('ended', (event) => {
-        if (track.loops<0)
-            media.play()
-
-        if (track.loops>0) {
-            track.loops--;
-            media.play()
-        }
-    })
-}
-
-
-window.cross_dl = async function cross_dl(trackid, url, flags) {
-    var response = await fetch(url, flags || FETCH_FLAGS);
-
-    checkStatus(response)
-
-    const reader = response.body.getReader();
-
-    const len = +response.headers.get("Content-Length");
-    const track = MM[trackid]
-
-    // concatenate chunks into single Uint8Array
-    track.data = new Uint8Array(len);
-    track.pos = 0
-    track.len = len
-
-    console.warn(url, track.len)
-
-    while(true) {
-        const {done, value} = await reader.read()
-
-        if (done) {
-            track.avail = true
-            break
-        }
-        try {
-            track.data.set(value, track.pos)
-        } catch (x) {
-            track.pos = -1
-            console.error("1323: cannot download", url)
-        }
-
-        track.pos += value.length
-
-        //console.log(`${trackid}:${url} Received ${track.pos} of ${track.len}`)
-    }
-
-    console.log(`${trackid}:${url} Received ${track.pos} of ${track.len} to ${track.path}`)
-    if (track.type === "fs" ) {
-        FS.writeFile(track.path, track.data)
-    }
-
-}
-
-
-MM.prepare = function prepare(url, cfg) {
-    MM.tracks++;
-    const trackid = MM.tracks
-    var audio
-
-    cfg = JSON.parse(cfg)
-
-
-    const transport = cfg.io || 'packed'
-    const type = cfg.type || 'fs'
-
-    MM[trackid] = { ...cfg, ...{
-            "trackid": trackid,
-            "type"  : type,
-            "url"   : url,
-            "error" : false,
-            "len"   : 0,
-            "pos"   : 0,
-            "io"    : transport,
-            "ready" : undefined,
-            "auto"  : false,
-            "avail" : undefined,
-            "media" : undefined,
-            "data"  : undefined
-        }
-    }
-    const track = MM[trackid]
-
-//console.log("MM.prepare", trackid, transport, type)
-
-    if (transport === 'fs') {
-        if ( type === "audio" ) {
-            const blob = new Blob([FS.readFile(track.url)])
-            audio = new Audio(URL.createObjectURL(blob))
-            track.avail = true
-        } else {
-            console.error("fs transport is only for audio", JSON.stringify(track))
-            track.error = true
-            return track
-        }
-    }
-
-    if (transport === "url" ) {
-        // audio tag can download itself
-        if ( type === "audio" ) {
-            audio = new Audio(url)
-            track.avail = true
-        } else {
-console.log("MM.cross_dl", trackid, transport, type, url )
-            cross_dl(trackid, url, {} )
-        }
-    }
-
-
-    if (audio) {
-        track.media = audio
-
-        track.set_volume = (v) => { track.media.volume = 0.0 + v }
-        track.get_volume = () => { return track.media.volume }
-        track.stop = () => { track.media.pause() }
-
-        track.play = (loops) => { MM_play( track, loops) }
-
-        MM_autoevents(track)
-
-    }
-
-//console.log("MM.prepare", url,"queuing as",trackid)
-    media_prepare(trackid)
-//console.log("MM.prepare", url,"queued as",trackid)
-    return track
-}
-
-
-MM.load = function load(trackid, loops) {
-// loops =0 play once, loops>0 play number of time, <0 loops forever
-    const track = MM[trackid]
-
-    loops = loops || 0 //??=
-    track.loops = loops
-
-    if (!track.avail) {
-        // FS not ready
-        console.error("981 TODO: bounce with setTimeout")
-        return 0
-    }
-
-
-    if (track.type === "audio") {
-        MM_autoevents( track )
-        return trackid
-    }
-
-    if (track.type === "mount") {
-        const mount = track
-        console.log(track.mount.point , track.mount.path, trackid )
-        mount_ab( track.data , track.mount.point , track.mount.path, trackid )
-        return trackid
-    }
-// unsupported type
-    return -1
-}
-
-
-MM.play = function play(trackid, loops, start, fade_ms) {
-    console.log("MM.play",trackid, loops, MM[trackid] )
-    const track = MM[trackid]
-    track.loops = loops
-    if (track.ready)
-        track.media.play()
-    else {
-        console.warn("Cannot play before user interaction, will retry", track )
-        function play_asap() {
-            if (track.ready) {
-                track.media.play()
+                // only one script tag for now
+                break
             } else {
-                setTimeout(play_asap, 500)
+                console.log("script?", script.type, script.id, script.src, script.text )
             }
         }
-        play_asap()
-    }
-}
 
-MM.stop = function stop(trackid) {
-    console.log("MM.stop", trackid, MM[trackid] )
-    MM[trackid].media.currentTime = 0
-    MM[trackid].media.pause()
-}
-
-
-MM.pause = function pause(trackid) {
-    console.log("MM.pause", trackid, MM[trackid] )
-    MM[trackid].media.pause()
-}
-
-MM.set_volume = function set_volume(trackid, vol) {
-    MM[trackid].media.volume = 1 * vol
-}
-
-MM.set_volume = function get_volume(trackid, vol) {
-    return MM[trackid].media.volume
-}
-
-
-window.chromakey = function(context, r,g,b, tolerance, alpha) {
-    context = canvas.getContext('2d', { willReadFrequently: true } );
-
-    var imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-    var data = imageData.data;
-
-    r = r || data[0]
-    g = g || data[1]
-    b = b || data[2]
-    tolerance = tolerance || 255;
-    tolerance -= 255
-    alpha = alpha || 0
-
-
-
-    for(var i = 0, n = data.length; i < n; i += 4) {
-        var diff = Math.abs(data[i] - r) + Math.abs(data[i+1] - g) + Math.abs(data[i+2] - b);
-        if(diff <= tolerance) {
-            data[i + 3] = alpha;
+        for (const script of document.getElementsByTagName('script')) {
+            //TODO: process py-script brython whatever and push to vm.script.blocks
+            // for concat with vm.FS.writeFile
         }
-    }
-    context.putImageData(imageData, 0, 0);
-}
 
-
-window.mobile_check = function() {
-    let check = false;
-    (   function(a){
-        if(/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino/i.test(a)||/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0,4)))
-            check = true;
-        }
-    )(navigator.userAgent||navigator.vendor||window.opera);
-    return check;
-}
-
-window.mobile_tablet = function() {
-    let check = false;
-    (   function(a){
-        if(/(android|bb\d+|meego).+mobile|avantgo|bada\/|blackberry|blazer|compal|elaine|fennec|hiptop|iemobile|ip(hone|od)|iris|kindle|lge |maemo|midp|mmp|mobile.+firefox|netfront|opera m(ob|in)i|palm( os)?|phone|p(ixi|re)\/|plucker|pocket|psp|series(4|6)0|symbian|treo|up\.(browser|link)|vodafone|wap|windows ce|xda|xiino|android|ipad|playbook|silk/i.test(a)||/1207|6310|6590|3gso|4thp|50[1-6]i|770s|802s|a wa|abac|ac(er|oo|s\-)|ai(ko|rn)|al(av|ca|co)|amoi|an(ex|ny|yw)|aptu|ar(ch|go)|as(te|us)|attw|au(di|\-m|r |s )|avan|be(ck|ll|nq)|bi(lb|rd)|bl(ac|az)|br(e|v)w|bumb|bw\-(n|u)|c55\/|capi|ccwa|cdm\-|cell|chtm|cldc|cmd\-|co(mp|nd)|craw|da(it|ll|ng)|dbte|dc\-s|devi|dica|dmob|do(c|p)o|ds(12|\-d)|el(49|ai)|em(l2|ul)|er(ic|k0)|esl8|ez([4-7]0|os|wa|ze)|fetc|fly(\-|_)|g1 u|g560|gene|gf\-5|g\-mo|go(\.w|od)|gr(ad|un)|haie|hcit|hd\-(m|p|t)|hei\-|hi(pt|ta)|hp( i|ip)|hs\-c|ht(c(\-| |_|a|g|p|s|t)|tp)|hu(aw|tc)|i\-(20|go|ma)|i230|iac( |\-|\/)|ibro|idea|ig01|ikom|im1k|inno|ipaq|iris|ja(t|v)a|jbro|jemu|jigs|kddi|keji|kgt( |\/)|klon|kpt |kwc\-|kyo(c|k)|le(no|xi)|lg( g|\/(k|l|u)|50|54|\-[a-w])|libw|lynx|m1\-w|m3ga|m50\/|ma(te|ui|xo)|mc(01|21|ca)|m\-cr|me(rc|ri)|mi(o8|oa|ts)|mmef|mo(01|02|bi|de|do|t(\-| |o|v)|zz)|mt(50|p1|v )|mwbp|mywa|n10[0-2]|n20[2-3]|n30(0|2)|n50(0|2|5)|n7(0(0|1)|10)|ne((c|m)\-|on|tf|wf|wg|wt)|nok(6|i)|nzph|o2im|op(ti|wv)|oran|owg1|p800|pan(a|d|t)|pdxg|pg(13|\-([1-8]|c))|phil|pire|pl(ay|uc)|pn\-2|po(ck|rt|se)|prox|psio|pt\-g|qa\-a|qc(07|12|21|32|60|\-[2-7]|i\-)|qtek|r380|r600|raks|rim9|ro(ve|zo)|s55\/|sa(ge|ma|mm|ms|ny|va)|sc(01|h\-|oo|p\-)|sdk\/|se(c(\-|0|1)|47|mc|nd|ri)|sgh\-|shar|sie(\-|m)|sk\-0|sl(45|id)|sm(al|ar|b3|it|t5)|so(ft|ny)|sp(01|h\-|v\-|v )|sy(01|mb)|t2(18|50)|t6(00|10|18)|ta(gt|lk)|tcl\-|tdg\-|tel(i|m)|tim\-|t\-mo|to(pl|sh)|ts(70|m\-|m3|m5)|tx\-9|up(\.b|g1|si)|utst|v400|v750|veri|vi(rg|te)|vk(40|5[0-3]|\-v)|vm40|voda|vulc|vx(52|53|60|61|70|80|81|83|85|98)|w3c(\-| )|webc|whit|wi(g |nc|nw)|wmlb|wonu|x700|yas\-|your|zeto|zte\-/i.test(a.substr(0,4)))
-            check = true;
-        }
-    )(navigator.userAgent||navigator.vendor||window.opera);
-    return check;
-}
-
-window.mobile = () => {
-    try {
-        return navigator.userAgentData.mobile
-    } catch (x) {
-        console.warn("FIXME:", x)
     }
 
-    return mobile_check()
-}
+    console.error("auto_start done")
 
-
-if (navigator.connection) {
-    if ( navigator.connection.type === 'cellular' ) {
-        console.warn("Connection:","Cellular")
-        if ( navigator.connection.downlinkMax <= 0.115) {
-            console.warn("Connection:","2G")
-        }
-    } else {
-        console.warn("Connection:","Wired")
-    }
-}
-
-
-
-//TODO: battery
-    // https://developer.mozilla.org/en-US/docs/Web/API/BatteryManager/levelchange_event
-
-//TODO: camera+audio cap
-    //https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
-
-// https://developer.mozilla.org/en-US/docs/Web/API/Permissions_API
-    //https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Feature-Policy/camera
-
-// https://developer.mozilla.org/en-US/docs/Web/API/Accelerometer
-
-// https://developer.mozilla.org/en-US/docs/Web/API/AmbientLightSensor
-
-
-
-window.debug = function () {
-    vm.config.debug = true
-    const debug_hidden =  false
-    try {
-        window.custom_onload(debug_hidden)
-
-    } catch (x) {
-        console.error("using debug UI default, because no custom_onload or failure")
-        for (const e of ["pyconsole","system","iframe","transfer","info","box","terminal"] ) {
-            if (window[e])
-                window[e].hidden = debug_hidden
-        }
-    }
-    vm.PyRun_SimpleString(`#!
-shell.uptime()
-`)
-    window_resize()
-}
-
-
-window.blob = function blob(filename) {
-    console.warn(__FILE__, "1620: TODO: revoke blob url")
-    return URL.createObjectURL( new Blob([FS.readFile(filename)]))
-}
-
-/*
-function rpc_handler(emsg, url, line) {
-    if ( (line == 1) && (emsg.search(': py.')>0)){
-        console.log('msg', emsg, 'url', url, 'line', line)
-        return true
-    }
-    return false
-}
-
-window.addEventListener("error", rpc_handler )
-*/
-
-window.rpc = { path : [], call : "", argv : [] }
-
-function bridge(host) {
-    const pybr = new Proxy(function () {}, {
-    get(_, k, receiver) {
-        rpc.path.push(k)
-        return pybr
-    },
-    apply(_, o, argv) {
-        const call = rpc.path.join(".")
-        if (host === window.python) {
-// TODO: rpc id / event serialisation
-            queue_event("rpc", { "call": call, "argv" : argv, "rpcid": window.event} )
-        } else {
-            window.rpc.call = call
-            window.rpc.argv = Array.from(argv)
-            if (!argv.length) {
-                console.error("event should always be first param")
-                window.rpc.argv.unshift(window.event)
-            } else if (argv.length>0 && (window.event!==argv[0])) {
-                console.error("event should always be first param")
-                window.rpc.argv.unshift(window.event)
-            }
-            host.click()
-        }
-        rpc.path.length=0
-    }
-  });
-  return pybr
-}
-
-
-
-
-window.Fetch = {}
-
-// generator functions for async fetch API
-// script is meant to be run at runtime in an emscripten environment
-
-// Fetch API allows data to be posted along with a POST request
-window.Fetch.POST = function * POST (url, data)
-{
-    // post info about the request
-    console.log("POST: " + url + "\nData: " + data);
-    var request = new Request(url, {method: 'POST', body: JSON.stringify(data)})
-    var content = 'undefined';
-    fetch(request)
-   .then(resp => resp.text())
-   .then((resp) => {
-        console.log(resp);
-        content = resp;
-   })
-   .catch(err => {
-         // handle errors
-         console.log("An Error Occurred:")
-         console.log(err);
-    });
-
-    while(content == 'undefined'){
-        yield content;
-    }
-}
-
-// Only URL to be passed
-// when called from python code, use urllib.parse.urlencode to get the query string
-window.Fetch.GET = function * GET (url)
-{
-    console.log("GET: " + url);
-    var request = new Request(url, { method: 'GET' })
-    var content = 'undefined';
-    fetch(request)
-   .then(resp => resp.text())
-   .then((resp) => {
-        console.log(resp);
-        content = resp;
-   })
-   .catch(err => {
-         // handle errors
-         console.log("An Error Occurred:");
-         console.log(err);
-    });
-
-    while(content == 'undefined'){
-        // generator
-        yield content;
-    }
 }
 
 
@@ -1772,3 +1868,32 @@ window.Fetch.GET = function * GET (url)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+auto_start()
