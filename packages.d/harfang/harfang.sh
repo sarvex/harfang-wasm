@@ -164,6 +164,8 @@ popd
 
 if [ -d testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten ]
 then
+    mkdir -p build/web/archives/repo/pkg
+
     emcc -Os -g0 -shared -fpic -o testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
     [ -f testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
     pushd testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten

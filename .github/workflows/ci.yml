@@ -9,7 +9,7 @@ jobs:
         SDK_VERSION: 3.1.28.0
         SYS_PYTHON: /usr/bin/python3
         PACKAGES: emsdk pygame
-        STATIC: false
+        STATIC: true
         BUILDS: 3.12 3.11 3.10
         CYTHON: Cython-3.0.0a11-py2.py3-none-any.whl
 
