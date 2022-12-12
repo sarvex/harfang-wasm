@@ -6,11 +6,11 @@ jobs:
   build:
     runs-on: ubuntu-22.04
     env:
-        SDK_VERSION: 3.1.28.0
+        SDK_VERSION: 3.1.29.0
         SYS_PYTHON: /usr/bin/python3
         PACKAGES: emsdk pygame
-        STATIC: true
-        BUILDS: 3.12 3.11 3.10
+        STATIC: false
+        BUILDS: 3.12 3.11
         CYTHON: Cython-3.0.0a11-py2.py3-none-any.whl
 
     steps:
@@ -33,18 +33,6 @@ jobs:
             echo
             sudo apt-get update 2>&1 >/dev/null
             sudo apt-get install -y bash git curl wget lz4 pv 2>&1 >/dev/null
-
-
-    - name: build 3.10 packages
-      run: |
-            cd $GITHUB_WORKSPACE
-            PYBUILD=3.10 bash ./scripts/build-pkg.sh
-
-    - name: build 3.10 loader
-      run: |
-            cd $GITHUB_WORKSPACE
-            PYBUILD=3.10 bash ./scripts/build-loader.sh
-
 
 
     - name: build 3.11 packages
