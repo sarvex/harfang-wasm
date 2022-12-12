@@ -112,8 +112,10 @@ async def main():
 
         hg.RenderShutdown()
 
+async def custom_site():
+    await main()
 
-asyncio.run(main())
+asyncio.run(custom_site())
 
 # --></script></html>
 
