@@ -35,8 +35,9 @@ pushd $(pwd)/src
 
     # https://github.com/harfang3d/harfang3d/pull/20 has been merged
     # wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/20.diff | patch -p1
-
-    wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/38.diff | patch -p1
+    
+    # merged
+    # wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/38.diff | patch -p1
 
     export HG_SRC_DIR=$(pwd)
 
