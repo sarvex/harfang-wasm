@@ -35,7 +35,7 @@ pushd $(pwd)/src
 
     # https://github.com/harfang3d/harfang3d/pull/20 has been merged
     # wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/20.diff | patch -p1
-    
+
     # merged
     # wget -O- https://patch-diff.githubusercontent.com/raw/harfang3d/harfang3d/pull/38.diff | patch -p1
 
@@ -165,13 +165,13 @@ fi
 
 popd
 
-if [ -d testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten ]
+if [ -d testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten ]
 then
     mkdir -p build/web/archives/repo/pkg
 
-    emcc -Os -g0 -shared -fpic -o testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
-    [ -f testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
-    pushd testing/harfang-3.2.4-cp32-abi3-wasm32_mvp_emscripten
+    emcc -Os -g0 -shared -fpic -o testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
+    [ -f testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
+    pushd testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten
     if [ -d /data/git/archives/repo ]
     then
         whl=/data/git/archives/repo/pkg/$(basename $(pwd)).whl
