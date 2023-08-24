@@ -1,0 +1,13 @@
+--- harfang-3.2.7/extern/bgfx/bgfx/src/renderer_gl.cpp	2023-08-24 04:02:40.885621716 +0200
++++ harfang-wasm/extern/bgfx/bgfx/src/renderer_gl.cpp	2023-08-23 04:28:19.734872425 +0200
+@@ -3280,7 +3280,9 @@
+ 		{
+ 			m_program[_handle.idx].destroy();
+ 		}
+-
++#if defined(__EMSCRIPTEN__)
++__attribute__ ((visibility ("hidden")))
++#endif
+ 		void* createTexture(TextureHandle _handle, const Memory* _mem, uint64_t _flags, uint8_t _skip) override
+ 		{
+ 			m_textures[_handle.idx].create(_mem, _flags, _skip);

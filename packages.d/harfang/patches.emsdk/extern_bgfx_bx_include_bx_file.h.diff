@@ -1,0 +1,17 @@
+--- harfang-3.2.7/extern/bgfx/bx/include/bx/file.h	2023-08-24 04:02:40.951620877 +0200
++++ harfang-wasm/extern/bgfx/bx/include/bx/file.h	2023-08-23 03:26:14.043856197 +0200
+@@ -9,6 +9,14 @@
+ #include "filepath.h"
+ #include "readerwriter.h"
+ 
++#if defined(_LARGEFILE64_SOURCE)
++    /* for glibc system that support LFS */
++#else
++    /* others */
++#   define fseeko64 fseeko
++#   define ftello64 ftello
++#endif
++
+ namespace bx
+ {
+ 	/// Returns standard input reader.

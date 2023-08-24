@@ -31,6 +31,15 @@ pushd $(pwd)/src
         pushd $(pwd)/harfang
         git submodule update --init --recursive
         git clone --depth 1 https://github.com/ejulien/FABGen fabgen
+
+        echo "
+
+
+    applying patches
+
+
+"
+        cat ${ROOT}/packages.d/harfang/patches.emsdk/*.diff | patch -p1
     fi
 
     # https://github.com/harfang3d/harfang3d/pull/20 has been merged
@@ -44,6 +53,7 @@ pushd $(pwd)/src
     FABGEN=$HG_SRC_DIR/fabgen
     sed -i 's|error|warning|g' ${HG_SRC_DIR}/extern/cmft/src/cmft/common/platform.h
 
+    VERSION=$(cat harfang/version.txt)
 popd
 popd
 
@@ -147,7 +157,7 @@ then
 
     echo "
 
-Linking :
+Linking ${VERSION}:
     $LINKALL
 Into : ${SDKROOT}/prebuilt/emsdk/libharfang${PYBUILD}.a
 
@@ -165,19 +175,19 @@ fi
 
 popd
 
-if [ -d testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten ]
+if [ -d testing/harfang-${VERSION}-cp32-abi3-wasm32_mvp_emscripten ]
 then
     mkdir -p build/web/archives/repo/pkg
 
-    emcc -Os -g0 -shared -fpic -o testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
-    [ -f testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
-    pushd testing/harfang-3.2.5-cp32-abi3-wasm32_mvp_emscripten
+    emcc -Os -g0 -shared -fpic -o testing/harfang-${VERSION}-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so /opt/python-wasm-sdk/prebuilt/emsdk/libharfang${PYBUILD}.a
+    [ -f testing/harfang-${VERSION}-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map ] && rm testing/harfang-${VERSION}-cp32-abi3-wasm32_mvp_emscripten/harfang/harfang.so.map
+    pushd testing/harfang-${VERSION}-cp32-abi3-wasm32_mvp_emscripten
     if [ -d /data/git/archives/repo ]
     then
         whl=/data/git/archives/repo/pkg/$(basename $(pwd)).whl
     else
-        mkdir build/web/archives/repo/pkg
-        whl=build/web/archives/repo/pkg/$(basename $(pwd)).whl
+        mkdir -p ${ROOT}/build/web/archives/repo/pkg
+        whl=${ROOT}/build/web/archives/repo/pkg/$(basename $(pwd)).whl
     fi
     [ -f $whl ] && rm $whl
     zip $whl -r .

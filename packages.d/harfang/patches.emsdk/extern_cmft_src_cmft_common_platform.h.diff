@@ -1,0 +1,11 @@
+--- harfang-3.2.7/extern/cmft/src/cmft/common/platform.h	2023-08-24 04:02:41.065619427 +0200
++++ harfang-wasm/extern/cmft/src/cmft/common/platform.h	2023-08-23 04:28:39.059637182 +0200
+@@ -73,7 +73,7 @@
+ #   undef CMFT_PTR_SIZE
+ #   define CMFT_PTR_SIZE 4
+ #else
+-#   error Unsupported platform!
++#   warning Unsupported platform!
+ #endif
+ 
+ #if (0                        \

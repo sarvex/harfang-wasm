@@ -1,0 +1,15 @@
+--- harfang-3.2.7/extern/cmft/src/cmft/image.cpp	2023-08-24 04:02:41.066619414 +0200
++++ harfang-wasm/extern/cmft/src/cmft/image.cpp	2023-08-23 03:23:24.158446009 +0200
+@@ -191,6 +191,12 @@
+     #elif CMFT_PLATFORM_APPLE
+     #   define fseeko64 fseeko
+     #   define ftello64 ftello
++    #elif defined(_LARGEFILE64_SOURCE)
++        /* for glibc system that support LFS */
++    #else
++        /* others */
++    #   define fseeko64 fseeko
++    #   define ftello64 ftello
+     #endif // CMFT_
+ 
+     int64_t rwSeekFile(Rw* _rw, int64_t _offset = 0, Whence::Enum _whence = Whence::Current)
