@@ -10,6 +10,11 @@ readline.complete = function (line) {
 
 }
 
+function rawstdin(line) {
+    //console.log("RAW:", line )
+    python.rawstdin(line)
+}
+
 
 if (!window.Terminal) {
     var xterm_cdn
@@ -109,6 +114,10 @@ export class WasmTerminal {
 
         const cx = this.xterm.buffer.active.cursorX
 
+// TODO: check mouse pos
+        if (window.RAW_MODE)
+            rawstdin(data)
+
         // TODO: Handle ANSI escape sequences
         if (ord === 0x1b) {
 
@@ -176,8 +185,13 @@ export class WasmTerminal {
                             //console.log("VT LEFT")
                             break;
 
+                        case 60:
+                            if (!window.RAW_MODE)
+                                rawstdin(data)
+                            break;
+
                         default:
-                            console.log(__FILE__,"VT arrow ? "+data.charCodeAt(2))
+                            console.log(__FILE__,"VT unhandled ? "+data.charCodeAt(2))
                     }
                     break
                 default:

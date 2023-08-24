@@ -1,6 +1,19 @@
 "use strict";
 
+/*  Facilities implemented in js
+
+    js.SVG     : convert svg to png
+    js.FETCH   : async GET/POST via fetch
+    js.MM      : media manager
+        js.MM.CAMERA
+    js.VT      : terminal creation
+    js.FTDI    : usb serial
+    js.MISC    : todo
+
+*/
+
 const module_name = "pythons.js"
+
 
 var config
 
@@ -13,12 +26,33 @@ const FETCH_FLAGS = {
 }
 
 
+window.get_terminal_cols = function () {
+    var cdefault = vm.config.cols || 132
+    const cols = (window.terminal && terminal.dataset.cols) || cdefault
+    return Number(cols)
+}
+
+window.get_terminal_console = function () {
+    var cdefault = 0
+    if (window.terminal)
+        if (vm && vm.config.debug)
+            cdefault = 10
+    return Number( (window.terminal && terminal.dataset.console) || cdefault )
+}
+
+window.get_terminal_lines = function () {
+    return Number( (window.terminal && terminal.dataset.lines) || vm.config.lines) + get_terminal_console()
+}
+
 
 if (window.config) {
    config = window.config
 } else {
    config = {}
 }
+
+if (document.characterSet.toLowerCase() !== "utf-8")
+    alert("Host page encoding must be set to UTF-8 with tag :  meta charset=utf-8")
 
 window.addEventListener("error", function (e) {
    alert("Error occurred: " + e.error.message);
@@ -33,7 +67,7 @@ function reverse(s){
     return s.split("").reverse().join("");
 }
 
-// please comment if you find a bug
+// please comment here if you find a bug
 // https://stackoverflow.com/questions/5202085/javascript-equivalent-of-pythons-rsplit
 
 String.prototype.rsplit = function(sep, maxsplit) {
@@ -58,12 +92,14 @@ String.prototype.rsplit = function(sep, maxsplit) {
     if (result.length) {
         result.reverse()
         if (data.length>1) {
-            return [data.join(sep), result ]
+            // thx @imkzh
+            return [data.join(sep), ...result ]
         }
         return result
     }
     return [this]
 }
+
 
 function jsimport(url, sync) {
     const jsloader=document.createElement('script')
@@ -78,7 +114,6 @@ window.jsimport = jsimport
 window.__defineGetter__('__FILE__', function() {
   return (new Error).stack.split('/').slice(-1).join().split('?')[0].split(':')[0] +": "
 })
-
 
 
 const delay = (ms, fn_solver) => new Promise(resolve => setTimeout(() => resolve(fn_solver()), ms));
@@ -111,6 +146,11 @@ window.defined = defined
 var prom = {}
 var prom_count = 0
 window.iterator = function * iterator(oprom) {
+    if (prom_count > 32000 ) {
+        console.warn("resetting prom counter")
+        prom_count = 0
+    }
+
     const mark = prom_count++;
     var counter = 0;
     oprom.then( (value) => prom[mark] = value )
@@ -183,15 +223,11 @@ window.cross_dl = async function cross_dl(url, flags) {
     console.log("cross_dl len=", response.headers.get("Content-Length") )
     console.log("cross_dl.error", response.error )
     if (response.body) {
-        console.log("cross_dl.text", await response.text() )
-        /*
-        const reader = response.body.getReader();
-        const text = await reader.read();
-        console.log("cross_dl.text", text )
-        */
+        return await response.text()
     } else {
         console.error("cross_dl: no body")
     }
+    return ""
 }
 
 
@@ -224,8 +260,10 @@ function is_iframe() {
 }
 
 function prerun(VM) {
-
     console.warn("VM.prerun")
+
+    VM.FS = FS
+
 
     if (window.BrowserFS) {
         vm.BFS = new BrowserFS.EmscriptenFS()
@@ -235,7 +273,6 @@ function prerun(VM) {
     }
 
     const sixel_prefix = String.fromCharCode(27)+"Pq"
-
 
 
     var buffer_stdout = ""
@@ -336,6 +373,7 @@ function prerun(VM) {
     VM.arguments.push(VM.APK)
 
     VM.FS.init(stdin, stdout, stderr);
+
 }
 
 
@@ -433,6 +471,8 @@ const vm = {
         readline : function(line) {
             const ud = { "type" : "stdin", "data" : line }
             if (window.worker) {
+                //if (line.search(chr(0x1b)))
+                  //  console.log("446: non-printable", line)
                 window.worker.postMessage({ target: 'custom', userData: ud });
             } else {
                 this.postMessage(ud);
@@ -460,49 +500,56 @@ const vm = {
 }
 
 
-function run_pyrc(content) {
+async function run_pyrc(content) {
     const pyrc_file = "/data/data/org.python/assets/pythonrc.py"
+    const main_file = "/data/data/org.python/assets/main.py"
 
-// TODO: concat blocks
-    vm.FS.writeFile( "/data/data/org.python/assets/main.py" , vm.script.blocks[0] )
     vm.FS.writeFile(pyrc_file, content )
+
+// embedded canvas
+    if (vm.PyConfig.frozen) {
+        if ( canvas.dataset.path ) {
+            vm.PyConfig.frozen_path = canvas.dataset.src
+        } else {
+            vm.PyConfig.frozen_path = location.href.rsplit("/",1)  // current doc url as base
+        }
+        var frozencode = canvas.innerHTML
+        if (canvas.dataset.embed) {
+            vm.PyConfig.frozen_handler = canvas.dataset.embed
+        }
+        FS.writeFile(vm.PyConfig.frozen, frozencode)
+    } else {
+// TODO: concat blocks
+        vm.FS.writeFile(main_file, vm.script.blocks[0] )
+    }
 
     python.PyRun_SimpleString(`#!site
 PyConfig = json.loads("""${JSON.stringify(python.PyConfig)}""")
 verbose = PyConfig.get('quiet', False)
-if verbose:
-    print(" ")
-    print("* site.py from pythons.js *")
-
 import os, sys, json
-
-
-if os.path.isdir(PyConfig['prefix']):
-    sys.path.append(PyConfig['prefix'])
-    os.chdir(PyConfig['prefix'])
-
-fn = "${pyrc_file}"
-
-print("fixme async exec")
-
-if os.path.isfile(fn):
-    exec(open(fn).read(), globals(), globals())
-    if verbose:
-        print("* site.py done *")
-    def async_exec(filename):
-        exec(open(filename).read(), globals(), globals())
-        import asyncio
-        async def custom_site():
-            aio.create_task(platform.EventTarget.process())
-        asyncio.run( custom_site() )
-    async_exec("/data/data/org.python/assets/main.py")
+pfx=PyConfig['prefix']
+if os.path.isdir(pfx):
+    sys.path.append(pfx)
+    os.chdir(pfx)
+__pythonrc__ = "${pyrc_file}"
+if os.path.isfile(__pythonrc__):
+    exec(open(__pythonrc__).read(), globals(), globals())
+    import asyncio
+    asyncio.run(import_site("${main_file}"))
 else:
-    print(fn,"not found")
+    print(f"510: invalid {__pythonrc__=}")
+del pfx, verbose
 #
 `)
 }
 
 
+function store_file(url, local) {
+    fetch(url, {})
+        .then( response => checkStatus(response) && response.arrayBuffer() )
+        .then( buffer => vm.FS.writeFile(local, new Uint8Array(buffer)) )
+        .catch(x => console.error(x))
+}
 async function custom_postrun() {
     console.warn("VM.postrun Begin")
     const pyrc_url = vm.config.cdn + "pythonrc.py"
@@ -514,9 +561,14 @@ async function custom_postrun() {
         .then( response => checkStatus(response) && response.arrayBuffer() )
         .then( buffer => run_pyrc(new Uint8Array(buffer)) )
         .catch(x => console.error(x))
+/*
+    store_file(
+        "https://pygame-web.github.io/archives/repo/repodata.json",
+        "/data/data/org.python/repodata.json"
+    )
+*/
     console.warn("VM.postrun End")
 }
-
 
 
 // ===================== DOM features ====================
@@ -525,26 +577,45 @@ async function custom_postrun() {
 
 function feat_gui(debug_hidden) {
 
-    var canvas = document.getElementById("canvas")
+    var canvas2d = document.getElementById("canvas")
 
-    if (!canvas) {
+    function add_canvas(name, width, height) {
+        const new_canvas = document.createElement("canvas")
+        new_canvas.id = name
+        new_canvas.width = width || 1
+        new_canvas.height = height || 1
+        document.body.appendChild(new_canvas)
+        return new_canvas
+    }
+
+    if (!canvas2d) {
         config.user_canvas = config.user_canvas || 0 //??=
-        canvas = document.createElement("canvas")
-        canvas.id = "canvas"
-        canvas.style.position = "absolute"
-        canvas.style.top = "0px"
-        canvas.style.right = "0px"
-        document.body.appendChild(canvas)
-console.warn("TODO: test 2D/3D reservation")
-
-
+        config.user_canvas_managed = config.user_canvas_managed || 0 //??=
+        canvas2d =  add_canvas("canvas")
+        canvas2d.style.position = "absolute"
+        canvas2d.style.top = "0px"
+        canvas2d.style.right = "0px"
+        canvas2d.tabindex = 0
         //var ctx = canvas.getContext("2d")
     } else {
         // user managed canvas
-        config.user_canvas = config.user_canvas || 1
+        config.user_canvas = 1
+        config.user_canvas_managed = config.user_canvas_managed || 0 //??=
+console.warn("TODO: user defined canvas")
     }
 
-    vm.canvas = canvas
+    vm.canvas2d = canvas2d
+
+    var canvas3d = document.getElementById("canvas3d")
+    if (!canvas3d) {
+        canvas3d = add_canvas("canvas3d", 128, 128)
+        canvas3d.style.position = "absolute"
+        canvas3d.style.bottom = "0px"
+        canvas3d.style.left = "0px"
+
+    }
+    vm.canvas3d = canvas3d
+
 /*
 
 
@@ -565,63 +636,11 @@ console.warn("TODO: test 2D/3D reservation")
     }
     document.addEventListener('click', event_fullscreen, false);
 
-
-    setTimeout(GL_TEST,500);
 */
-
-    function GL_TEST() {
-        var gl
-        const gl_aa = false
-
-        try {
-            gl = canvas.getContext("webgl2")
-        } catch (x) {
-            console.error("FIXME NO WEBGL2:", x)
-            gl = null;
-        }
-
-        if (!gl) {
-            try {
-                gl = canvas.getContext("webgl");
-            } catch (x) {
-                console.error("FIXME WEBGL:", x)
-                gl = null;
-            }
-        }
-
-        if (!gl) {
-            try {
-                gl = canvas.getContext("experimental-webgl");
-            } catch (x) {
-                console.error("FIXME experimental-webgl :", x)
-                gl = null;
-            }
-        }
-
-        console.log("GL :", gl)
-        if (gl) {
-            var ext = gl.getExtension('OES_standard_derivatives');
-            if (!ext)
-                console.log('GL: [OES_standard_derivatives] supported');
-            else
-                console.log('GL: Error [OES_standard_derivatives] derivatives *not* supported');
-
-
-            var antialias = gl.getContextAttributes().antialias;
-            console.log('GL: antialias = '+antialias);
-
-            var aasize = gl.getParameter(gl.SAMPLES);
-            console.log('GL: antialias size = '+aasize );
-        } else  {
-            console.error("Uh, your browser doesn't support WebGL. This application won't work.");
-            return;
-
-        }
-    }
-    window.GL_TEST = GL_TEST
 
     // window resize
     function window_canvas_adjust(divider) {
+        const canvas = vm.canvas2d
         var want_w
         var want_h
 
@@ -657,9 +676,6 @@ console.warn("TODO: test 2D/3D reservation")
         want_w = Math.trunc(want_w / divider )
         want_h = Math.trunc(want_w / ar)
 
-        if (vm.config.debug)
-            console.log("window[DEBUG:CORRECTED]:", want_w, want_h, ar, divider)
-
 
         // constraints
         if (want_h > max_height) {
@@ -672,44 +688,155 @@ console.warn("TODO: test 2D/3D reservation")
                 want_h = want_h / ar
         }
 
-        // apply
-
-        canvas.style.width = want_w + "px"
-        canvas.style.height = want_h + "px"
 
         if (vm.config.debug) {
             canvas.style.margin= "none"
             canvas.style.left = "auto"
             canvas.style.bottom = "auto"
         } else {
-            if (!vm.config.user_canvas) {
-                // center canvas
-                canvas.style.position = "absolute"
-                canvas.style.left = 0
-                canvas.style.bottom = 0
-                canvas.style.top = 0
-                canvas.style.right = 0
-                canvas.style.margin= "auto"
-            }
+            // canvas position is handled by program
+            if (vm.config.user_canvas)
+                return
+
+            // center canvas
+            canvas.style.position = "absolute"
+            canvas.style.left = 0
+            canvas.style.bottom = 0
+            canvas.style.top = 0
+            canvas.style.right = 0
+            canvas.style.margin= "auto"
         }
+
+        // apply
+        canvas.style.width = want_w + "px"
+        canvas.style.height = want_h + "px"
+
+        if (vm.config.debug)
+            console.log(`window[DEBUG:CORRECTED]: ${want_w}, ${want_h}, ar=${ar}, div=${divider}`)
+
+
     }
 
-    function window_resize(gui_divider) {
+
+    function window_canvas_adjust_3d(divider) {
+        const canvas = vm.canvas3d
+        divider = divider || 1
+        if ( (canvas.width==1) && (canvas.height==1) ){
+            console.log("canvas context not set yet")
+            setTimeout(window_canvas_adjust_3d, 100, divider);
+            return;
+        }
+
+        if (!vm.config.fb_ar) {
+            vm.config.fb_width = canvas.width
+            vm.config.fb_height = canvas.height
+            vm.config.fb_ar  =  canvas.width / canvas.height
+        }
+
+
+        var want_w
+        var want_h
+
+        const ar = vm.config.fb_ar
+
+        const dpr = window.devicePixelRatio
+        if (dpr != 1 )
+            console.warn("Unsupported device pixel ratio", dpr)
+
+        // default is maximize
+        // default is maximize
+        var max_width = window.document.body.clientWidth
+        var max_height = window.document.body.clientHeight
+        want_w = max_width
+        want_h = max_height
+
+
+        if (vm.config.debug)
+            console.log("window3D[DEBUG:CORRECTED]:", want_w, want_h, ar, divider)
+
+        // keep fb ratio
+        want_w = Math.trunc(want_w / divider )
+        want_h = Math.trunc(want_w / ar)
+
+        // constraints
+        if (want_h > max_height) {
+            //console.warn ("Too much H")
+            want_h = max_height
+            want_w = want_h * ar
+        }
+
+        if (want_w > max_width) {
+            //console.warn("Too much W")
+            want_w = max_width
+            want_h = want_h / ar
+        }
+
+        // restore phy size
+        canvas.width  = vm.config.fb_width
+        canvas.height = vm.config.fb_height
+
+        canvas.style.position = "absolute"
+        canvas.style.top = 0
+        canvas.style.right = 0
+
+        if (!vm.config.debug) {
+            // center canvas
+            canvas.style.left = 0
+            canvas.style.bottom = 0
+            canvas.style.margin= "auto"
+        } else {
+            canvas.style.margin= "none"
+            canvas.style.left = "auto"
+            canvas.style.bottom = "auto"
+        }
+
+        // apply viewport size
+        canvas.style.width = want_w + "px"
+        canvas.style.height = want_h + "px"
+
+        queue_event("resize3d", { width : want_w, height : want_h } )
+
+    }
+
+    function window_resize_3d(gui_divider) {
+console.log(" @@@@@@@@@@@@@@@@@@@@@@ 3D CANVAS @@@@@@@@@@@@@@@@@@@@@@")
+        setTimeout(window_canvas_adjust_3d, 200, gui_divider);
+        setTimeout(window.focus, 300);
+    }
+
+    function window_resize_2d(gui_divider) {
+        // don't interfere if program want to handle canvas placing/resizing
+        if (vm.config.user_canvas_managed)
+            return vm.config.user_canvas_managed
+
         if (!window.canvas) {
-            console.warn("416: No canvas defined")
+            console.warning("777: No canvas defined")
             return
         }
-        setTimeout(window_canvas_adjust, 100, gui_divider);
-        setTimeout(window.focus, 200);
+
+        setTimeout(window_canvas_adjust, 200, gui_divider);
+        setTimeout(window.focus, 300);
     }
 
+
+
     function window_resize_event() {
+        // special management for 3D ctx
+        if (vm.config.user_canvas_managed==3) {
+            window_resize(vm.config.gui_divider)
+            return
+        }
         window_resize(vm.config.gui_divider)
     }
 
     window.addEventListener('resize', window_resize_event);
-    window.window_resize = window_resize
+    if (vm.config.user_canvas_managed==3)
+        window.window_resize = window_resize_3d
+    else
+        window.window_resize = window_resize_2d
 
+    vm.canvas = canvas2d || canvas3d
+    return vm.canvas
 }
 
 
@@ -756,12 +883,12 @@ async function feat_fs(debug_hidden) {
 
         for (var i=0;i<dlg_multifile.files.length;i++) {
             let file = dlg_multifile.files[i]
-            var frec = {}
             const datapath = `/tmp/upload-${uploaded_file_count}`
+            var frec = {}
                 frec["name"] = file.name
-            frec["size"] = file.size
-            frec["mimetype"] = file.type
-            frec["text"] = datapath
+                frec["size"] = file.size
+                frec["mimetype"] = file.type
+                frec["text"] = datapath
 
             function file_done(data) {
                 const pydata = JSON.stringify(frec)
@@ -782,11 +909,13 @@ async function feat_fs(debug_hidden) {
         dlg_multifile.setAttribute("multiple",true)
         dlg_multifile.hidden = debug_hidden
         document.body.appendChild(dlg_multifile)
-        //br()
     }
     dlg_multifile.addEventListener("change", transfer_uploads );
 
 }
+
+
+// js.VT
 
 // simpleterm
 async function feat_vt(debug_hidden) {
@@ -802,19 +931,16 @@ async function feat_vt(debug_hidden) {
         stdio.hidden = debug_hidden
         stdio.setAttribute("tabIndex", 1)
         document.body.appendChild(stdio)
-        //br()
     }
 
     const { Terminal, helper, handlevt } = await import("./vt.js")
 
-    vm.vt.xterm = new Terminal("stdio", 132,25)
+    vm.vt.xterm = new Terminal("stdio", get_terminal_cols(), get_terminal_lines())
     vm.vt.xterm.set_vm_handler(vm, null, null)
 
     vm.vt.xterm.open()
 
 }
-
-
 
 // xterm.js + sixel
 async function feat_vtx(debug_hidden) {
@@ -831,12 +957,11 @@ async function feat_vtx(debug_hidden) {
         terminal.style.zIndex = 0
         terminal.setAttribute("tabIndex", 1)
         document.body.appendChild(terminal)
-        //br()
     }
 
     const { WasmTerminal } = await import("./vtx.js")
 
-    vm.vt = new WasmTerminal("terminal", 132, 42, [
+    vm.vt = new WasmTerminal("terminal", get_terminal_cols(), get_terminal_lines(), [
             { url : (config.cdn || "./") + "xtermjsixel/xterm-addon-image-worker.js", sixelSupport:true}
     ] )
 }
@@ -918,9 +1043,10 @@ __EMSCRIPTEN__.EventTarget.build('${ev.name}', '''${ev.data}''')
     }
 }
 
-
+// js.MM
 // =============================  media manager ===========================
 
+// js.MM.download
 function download(diskfile, filename) {
     if (!filename)
         filename = diskfile.rsplit("/").pop()
@@ -934,7 +1060,12 @@ function download(diskfile, filename) {
     document.body.removeChild(elem);
 }
 
-window.MM = { tracks : 0, UME : true, download : download }
+
+
+
+
+
+window.MM = { tracks : 0, UME : true, download : download, camera : {} }
 
 async function media_prepare(trackid) {
     const track = MM[trackid]
@@ -1040,7 +1171,7 @@ window.cross_track = async function cross_track(trackid, url, flags) {
 
     const reader = response.body.getReader();
 
-    const len = +response.headers.get("Content-Length");
+    const len = Number(response.headers.get("Content-Length"));
     const track = MM[trackid]
 
     // concatenate chunks into single Uint8Array
@@ -1063,10 +1194,7 @@ window.cross_track = async function cross_track(trackid, url, flags) {
             track.pos = -1
             console.error("1396: cannot download", url)
         }
-
         track.pos += value.length
-
-        //console.log(`${trackid}:${url} Received ${track.pos} of ${track.len}`)
     }
 
     console.log(`${trackid}:${url} Received ${track.pos} of ${track.len} to ${track.path}`)
@@ -1212,6 +1340,11 @@ MM.pause = function pause(trackid) {
     MM[trackid].media.pause()
 }
 
+MM.unpause = function unpause(trackid) {
+    console.log("MM.unpause", trackid, MM[trackid] )
+    MM[trackid].media.play()
+}
+
 MM.set_volume = function set_volume(trackid, vol) {
     MM[trackid].media.volume = 1 * vol
 }
@@ -1224,6 +1357,209 @@ MM.set_socket = function set_socket(mode) {
     vm["websocket"]["url"] = mode
     console.log("WebSocket default mode is now :", mode)
 }
+
+// js.MM.CAMERA
+
+// TODO: https://ffmpegwasm.netlify.app/ https://github.com/ffmpegwasm
+// TODO: write png in a wasm pre allocated array
+// TODO: frame rate
+
+window.MM.camera.started = 0
+window.MM.camera.init = function * (device, width,height, preview, grabber) {
+    if (!MM.camera.started) {
+        var done = 0
+        var rc = null
+        const vidcap = document.createElement('video')
+        vidcap.id = "vidcap"
+        vidcap.autoplay = true
+
+        window.vidcap = vidcap
+        width = width || 640
+        height = height || 480
+
+        vidcap.width = width
+        vidcap.height = height
+        const device = MM.camera.device || "/dev/video0"
+
+
+
+        MM.camera.fd = {}
+        MM.camera.busy = 0
+
+        // 60 fps
+        MM.camera.frame = { device : undefined , rate : Number.parseInt(1000/30/4) }
+
+        var framegrabber = null
+
+        if (window.stdout) {
+
+            if (preview)
+                stdout.appendChild(vidcap)
+
+            if (grabber) {
+                framegrabber = document.createElement('canvas')
+                stdout.appendChild(framegrabber)
+            } else {
+
+            }
+        }
+
+        if (!framegrabber)
+            framegrabber = new OffscreenCanvas(width, height)
+        else {
+            framegrabber.width = width
+            framegrabber.height = height
+        }
+
+        window.framegrabber = framegrabber
+
+        function onCameraFail(e) {
+            console.log('924: Camera did not start.', e)
+            MM.camera.started = 0
+            done =1
+        }
+
+        const params = {
+            audio: false,
+            video: {
+                "width": { ideal: width },
+                "height": {  ideal: height },
+            }
+        }
+
+
+        MM.camera.query_image = function () {
+            // ok to use previous image
+            if ( FS.analyzePath(device).exists )
+                return true
+            if (MM.camera.busy>25)
+                console.error("frame grabber is stuck")
+            return false
+        }
+
+        // TODO: same but async
+        MM.camera.get_raw = function * () {
+            // capture next frame and wait conversion
+            setTimeout(GRABBER, 0)
+            while (!MM.camera.frame[device])
+                yield 0
+            return MM.camera.frame[device]
+        }
+
+        const reader = new FileReader()
+
+        reader.addEventListener("load", () => {
+                const data = new Int8Array(reader.result)
+                FS.writeFile(device,  data )
+                //console.log("frame ready at ", MM.camera.busy)
+                MM.camera.frame[device] = data.length
+                MM.camera.busy--
+            }, false
+        )
+
+        async function GRABBER() {
+            if (MM.camera.busy<25)
+                setTimeout(GRABBER, MM.camera.frame["rate"])
+
+            if (MM.camera.busy>0)
+                return
+
+            MM.camera.busy++
+            framegrabber.getContext("2d").drawImage(vidcap, 0, 0);
+
+            // convert the new frame !
+            MM.camera.frame[device] = undefined
+            MM.camera.blob = await framegrabber.convertToBlob({type:"image/png"})
+            reader.readAsArrayBuffer(MM.camera.blob)
+        }
+
+        window.GRABBER = GRABBER
+
+        function connection(stream) {
+            vidcap.srcObject = stream
+            vidcap.onloadedmetadata = function(e) {
+                setTimeout(GRABBER, 0)
+                console.log("video stream ready")
+                MM.camera.started = 1
+                done =1
+            }
+        }
+
+        navigator.mediaDevices.getUserMedia(params) //, connection, onCameraFail)
+        .then( stream => connection(stream) )
+        .catch(e => onCameraFail(e))
+
+        while (!done)
+            yield 0
+
+        // wait for first frame
+        while (!MM.camera.frame[device])
+            yield 0
+    }
+    yield window.MM.camera.started
+}
+
+//=========================================================
+// js.SVG
+
+window.svg = { }
+
+window.svg.init = function () {
+    if (svg.screen)
+        return
+    svg.screen = new OffscreenCanvas(canvas.width, canvas.height)
+    svg.ctx = svg.screen.getContext('2d')
+
+}
+
+window.svg.render =  function * (path, dest) {
+    var converted = 0
+    svg.init()
+    dest = dest || path + ".png"
+    let blob = new Blob([FS.readFile(path)], {type: 'image/svg+xml'});
+    let url = URL.createObjectURL(blob);
+
+    svg.ctx.clearRect(0, 0, -1, -1);
+
+    let rd = new Image();
+        rd.src = url
+
+    async function load_cleanup () {
+        svg.ctx.drawImage(rd, 0, 0 )
+
+        window.svg.blob = await svg.screen.convertToBlob()
+        const reader = new FileReader()
+        reader.addEventListener("load", () => {
+            FS.writeFile(dest,  new Int8Array(reader.result) )
+            console.log("svg conversion of", path,"to png complete :" , dest)
+            converted = 1
+          }, false
+        );
+        reader.readAsArrayBuffer(svg.blob)
+        URL.revokeObjectURL(url)
+
+    }
+    rd.addEventListener('load', load_cleanup );
+    while (!converted)
+        yield converted
+}
+
+window.svg.draw = function (path, x, y) {
+    svg.init()
+    let blob = new Blob([FS.readFile(path)], {type: 'image/svg+xml'});
+    let url = URL.createObjectURL(blob);
+
+    const rd = new Image();
+    rd.src = url
+    function load_cleanup () {
+        canvas.getContext('2d').drawImage(rd,x || 0, y || 0 )
+        URL.revokeObjectURL(url)
+    }
+    rd.addEventListener('load', load_cleanup );
+}
+
+//=========================================================
+// js.misc
 
 window.chromakey = function(context, r,g,b, tolerance, alpha) {
     context = canvas.getContext('2d', { willReadFrequently: true } );
@@ -1238,8 +1574,6 @@ window.chromakey = function(context, r,g,b, tolerance, alpha) {
     tolerance -= 255
     alpha = alpha || 0
 
-
-
     for(var i = 0, n = data.length; i < n; i += 4) {
         var diff = Math.abs(data[i] - r) + Math.abs(data[i+1] - g) + Math.abs(data[i+2] - b);
         if(diff <= tolerance) {
@@ -1248,6 +1582,7 @@ window.chromakey = function(context, r,g,b, tolerance, alpha) {
     }
     context.putImageData(imageData, 0, 0);
 }
+
 
 
 window.mobile_check = function() {
@@ -1293,15 +1628,52 @@ if (navigator.connection) {
 }
 
 
+// js.FTDI
+
+window.io = {}
+
+async function open_port() {
+    var device = new WebUSBSerialDevice();
+console.log("device", device)
+    var ports = await device.getAvailablePorts()
+console.log("ports", ports);
+    var port = await device.requestNewPort();
+    const codec = new TextDecoder
+    const coder = new TextEncoder()
+
+    function cb(msg) {
+        const data = codec.decode(msg)
+        console.log("recv",data )
+        window.io.port.data = port.data + data
+    }
+
+    port.read = () => {
+        const data = window.io.port.data
+        window.io.port.data = ""
+        return data
+    }
+
+    port.write = (data) => {
+        port.send(coder.encode(data))
+    }
+
+    var data = await port.connect(cb, (error)=>console.error(error) )
+    window.io.port = port
+}
+
+window.io.open_serial = function * () {
+    open_port()
+    while (!window.io.port)
+        yield 0
+    yield window.io.port
+}
+
 
 //TODO: battery
     // https://developer.mozilla.org/en-US/docs/Web/API/BatteryManager/levelchange_event
 
 //TODO: camera+audio cap
     //https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia
-
-// https://developer.mozilla.org/en-US/docs/Web/API/Permissions_API
-    //https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/Feature-Policy/camera
 
 // https://developer.mozilla.org/en-US/docs/Web/API/Accelerometer
 
@@ -1330,21 +1702,13 @@ shell.uptime()
 
 
 window.blob = function blob(filename) {
-    console.warn(__FILE__, "1620: TODO: revoke blob url")
+    console.warn(__FILE__, "1458: TODO: revoke blob url")
     return URL.createObjectURL( new Blob([FS.readFile(filename)],  { oneTimeOnly: true }))
 }
 
-/*
-function rpc_handler(emsg, url, line) {
-    if ( (line == 1) && (emsg.search(': py.')>0)){
-        console.log('msg', emsg, 'url', url, 'line', line)
-        return true
-    }
-    return false
-}
+// ========================================
+// js.RPC
 
-window.addEventListener("error", rpc_handler )
-*/
 
 window.rpc = { path : [], call : "", argv : [] }
 
@@ -1378,6 +1742,8 @@ function bridge(host) {
 }
 
 
+// ========================================
+// js.FETCH
 
 
 window.Fetch = {}
@@ -1435,6 +1801,7 @@ window.Fetch.GET = function * GET (url, flags)
 }
 
 
+
 // ====================================================================================
 //          pyodide compat layer
 // ====================================================================================
@@ -1488,7 +1855,7 @@ async function onload() {
         debug_user = false
     }
 
-    const debug_dev = vm.PyConfig.orig_argv.includes("-X dev") || vm.PyConfig.orig_argv.includes("-d")
+    const debug_dev = vm.PyConfig.orig_argv.includes("-X dev") || vm.PyConfig.orig_argv.includes("-i")
     const debug_mobile = nuadm && ( debug_user || debug_dev )
     if ( debug_user || debug_dev || debug_mobile ) {
         debug_hidden = false;
@@ -1511,11 +1878,6 @@ async function onload() {
         console.warn("======= IFRAME =========")
     }
 
-
-    function br(){
-        document.body.appendChild( document.createElement('br') )
-    }
-
     feat_lifecycle()
 
     // container for html output
@@ -1529,17 +1891,29 @@ async function onload() {
     var has_vt = false
 
     for (const feature of vm.config.features) {
+        if (feature.startsWith("3d")) {
+            vm.config.user_canvas_managed = 3
+        }
+
+        if (feature.startsWith("embed")) {
+
+            vm.config.user_canvas_managed = vm.config.user_canvas_managed || 1
+
+            const canvasXd = feat_gui(true)
+            if ( canvasXd.innerHTML.length > 20 ) {
+                vm.PyConfig.frozen = "/tmp/to_embed.py"
+            }
+            // only canvas when embedding 2D/3D, stdxxx go to console.
+            break
+        }
 
         if (feature.startsWith("snd")) {
             feat_snd(debug_hidden)
         }
 
-
-
         if (feature.startsWith("gui")) {
             feat_gui(debug_hidden)
         }
-
 
         // file upload widget
 
@@ -1598,8 +1972,8 @@ async function onload() {
     if (window.window_resize)
         window_resize(vm.config.gui_divider)
 
-
 // console.log("cleanup while loading wasm", "has_parent?", is_iframe(), "Parent:", window.parent)
+
     feat_snd = feat_gui = feat_fs = feat_vt = feat_vtx = feat_stdout = feat_lifecycle = onload = null
 
     if ( is_iframe() ) {
@@ -1694,15 +2068,23 @@ console.log("pythons found at", url , elems)
         console.warn("1601: no inlined code found")
     }
 
-    // default
-    vm.script.interpreter = "cpython"
+    // resolve python executable
 
     if (vm.cpy_argv.length) {
         var orig_argv_py
-        if ( vm.cpy_argv[0].search('cpython3')>=0 || vm.cpy_argv[0].search('wapy')>=0 )
-            orig_argv_py = vm.script.interpreter
-        vm.script.interpreter = orig_argv_py || config.python || vm.script.interpreter
-        console.log("no python implementation specified, using default :",vm.script.interpreter)
+        if (vm.cpy_argv[0].search('cpython3')>=0) {
+            vm.script.interpreter = "cpython"
+            config.PYBUILD = vm.cpy_argv[0].substr(7) || "3.11"
+        } else {
+            if (vm.cpy_argv[0].search('wapy')>=0) {
+// TODO wapy is not versionned
+                vm.script.interpreter = "wapy"
+            } else {
+                vm.script.interpreter = config.python || "cpython"
+                config.PYBUILD = vm.cpy_argv[0].substr(7) || "3.11"
+                console.log("no python implementation specified in ",vm.cpy_argv,", using default :",vm.script.interpreter)
+            }
+        }
     }
 
     // running pygbag proxy, lan testing or a module url ?
@@ -1711,14 +2093,23 @@ console.log("pythons found at", url , elems)
     }
 
     config.cdn     = config.cdn || url.split(module_name, 1)[0]  //??=
+    config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
+    config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
+
+
+    // resolve arguments
+
     config.xtermjs = config.xtermjs || 0
 
     config.archive = config.archive || (location.search.search(".apk")>=0)  //??=
 
     config.debug = config.debug || (location.hash.search("#debug")>=0) //??=
 
-//FIXME: debug should force -i or just display vt ?
+//FIXME: should debug force -i or just display vt ?
 config.interactive = config.interactive || (location.search.search("-i")>=0) //??=
+
+    config.cols = cfg.cols || 132
+    config.lines = cfg.lines || 32
 
     config.gui_debug = config.gui_debug ||  2  //??=
 
@@ -1729,15 +2120,14 @@ config.interactive = config.interactive || (location.search.search("-i")>=0) //?
     config.can_close = config.can_close || 0
     config.autorun  = config.autorun || 0 //??=
     config.features = config.features || cfg.os.split(",") //??=
-// TODO wapy is not versionned
-    config.PYBUILD  = config.PYBUILD || vm.script.interpreter.substr(7) || "3.11" //??=
+
     config._sdl2    = config._sdl2 || "canvas" //??=
 
     if (config.ume_block === undefined)
         config.ume_block || true //??=
 
-    config.pydigits =  config.pydigits || config.PYBUILD.replace(".","") //??=
-    config.executable = config.executable || `${config.cdn}python${config.pydigits}/main.js` //??=
+    console.log(JSON.stringify(config))
+
 
     // https://docs.python.org/3/c-api/init_config.html#initialization-with-pyconfig
 
@@ -1821,6 +2211,8 @@ function auto_start(cfg) {
                 cfg = {
                     module : false,
                     python : script.dataset.python,
+                    cols : script.dataset.cols,
+                    lines : script.dataset.lines,
                     url : script.src,
                     os : script.dataset.os,
                     text : code,
@@ -1859,32 +2251,9 @@ function auto_start(cfg) {
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+window.set_raw_mode = function (param) {
+    window.RAW_MODE = param || 0
+}
 
 
 

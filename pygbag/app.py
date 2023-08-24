@@ -1,6 +1,9 @@
 import asyncio
 import sys
 
+# rmtree msg on win32
+import warnings
+
 # import os
 import argparse
 
@@ -22,10 +25,18 @@ from . import web
 
 devmode = "--dev" in sys.argv
 
+DEFAULT_SCRIPT = "main.py"
+CACHE_ROOT = Path("build")
+CACHE_PATH = CACHE_ROOT / "web-cache"
+CACHE_VERSION = CACHE_ROOT / "version.txt"
+CACHE_APP = CACHE_ROOT / "web"
+
 cdn_dot = __version__.split(".")
 cdn_dot.pop()
 cdn_version = ".".join(cdn_dot)
 del cdn_dot
+
+AUTO_REBUILD = True
 
 if devmode:
     sys.argv.remove("--dev")
@@ -46,60 +57,121 @@ if devmode:
     )
 
 else:
-    DEFAULT_CDN = f"https://pygame-web.github.io/archives/{cdn_version}/"
+    # use latest git build
+    if cdn_version == "0.0":
+        DEFAULT_CDN = f"https://pygame-web.github.io/pygbag/{cdn_version}/"
+    else:
+        DEFAULT_CDN = f"https://pygame-web.github.io/archives/{cdn_version}/"
     DEFAULT_PORT = 8000
     DEFAULT_TMPL = "default.tmpl"
 
-DEFAULT_SCRIPT = "main.py"
 
+def set_args(program):
+    global DEFAULT_SCRIPT
+    import sys
+    from pathlib import Path
 
-def main():
-    asyncio.run(main_run(Path(sys.argv[-1]).resolve()))
+    required = []
 
-
-async def main_run(patharg, cdn=DEFAULT_CDN):
-    global DEFAULT_PORT, DEFAULT_SCRIPT
-
+    patharg = Path(program).resolve()
     if patharg.is_file():
-        DEFAULT_SCRIPT = patharg.name
+        mainscript = patharg.name
         app_folder = patharg.parent
     else:
         app_folder = patharg.resolve()
+        mainscript = DEFAULT_SCRIPT
 
-    reqs = []
+    sys.path.insert(0, str(app_folder))
 
-    if sys.version_info < (3, 8):
-        # zip deflate  compression level 3.7
-        # https://docs.python.org/3.11/library/shutil.html#shutil.copytree dirs_exist_ok = 3.8
-        reqs.append("pygbag requires CPython version >= 3.8")
+    if patharg.suffix == "pyw":
+        required.append("79: Error, no .pyw allowed use .py for python script")
+
+    script_path = app_folder / mainscript
+
+    if not script_path.is_file():
+        required.append(f"83: Error, no main.py {script_path} found in folder")
 
     if not app_folder.is_dir() or patharg.as_posix().endswith("/pygbag/__main__.py"):
-        reqs.append(
-            "ERROR: Last argument must be app top level directory, or the main python script"
-        )
+        required.append("89: Error, Last argument must be a valid app top level directory, or the main.py python script")
 
-    if len(reqs):
-        while len(reqs):
-            print(reqs.pop())
-        sys.exit(1)
+    if sys.version_info < (3, 8):
+        # zip deflate compression level 3.7
+        # https://docs.python.org/3.11/library/shutil.html#shutil.copytree dirs_exist_ok = 3.8
+        required.append("84: Error, pygbag requires CPython version >= 3.8")
 
-    app_folder.joinpath("build").mkdir(exist_ok=True)
+    if len(required):
+        while len(required):
+            print(required.pop())
+        print("89: missing requirement(s)")
+        sys.exit(89)
 
-    build_dir = app_folder.joinpath("build/web")
-    build_dir.mkdir(exist_ok=True)
+    return app_folder, mainscript
 
-    cache_dir = app_folder.joinpath("build/web-cache")
 
-    if devmode and cache_dir.is_dir():
-        print("DEVMODE: clearing cache")
-        if shutil.rmtree.avoids_symlink_attacks:
-            shutil.rmtree(cache_dir.as_posix())
+def cache_check(app_folder, devmode=False):
+    global CACHE_PATH, CACHE_APP, __version__
+
+    version_file = app_folder / CACHE_VERSION
+
+    clear_cache = False
+
+    # always clear the cache in devmode, because cache source is local and changes a lot
+    if devmode:
+        print("103: DEVMODE: clearing cache")
+        clear_cache = True
+    elif version_file.is_file():
+        try:
+            with open(version_file, "r") as file:
+                cache_ver = file.read()
+                if cache_ver != __version__:
+                    print(f"115: cache {cache_ver} mismatch, want {__version__}, cleaning ...")
+                    clear_cache = True
+        except:
+            # something's wrong in cache structure, try clean it up
+            clear_cache = True
+    else:
+        clear_cache = True
+
+    cache_root = app_folder.joinpath(CACHE_ROOT)
+    cache_dir = app_folder / CACHE_PATH
+    build_dir = app_folder / CACHE_APP
+
+    def make_cache_dirs():
+        nonlocal cache_root, cache_dir
+
+        cache_root.mkdir(exist_ok=True)
+        build_dir.mkdir(exist_ok=True)
+        cache_dir.mkdir(exist_ok=True)
+
+    if clear_cache:
+        win32 = sys.platform == "win32"
+        if shutil.rmtree.avoids_symlink_attacks or win32:
+            if cache_dir.is_dir():
+                if win32:
+                    warnings.warn("clear cache : rmtree is not safe on that system (win32)")
+                shutil.rmtree(cache_dir.as_posix())
         else:
-            print("can't clear cache : rmtree is not safe")
+            print(
+                "115: cannot clear cache : rmtree is not safe on that system",
+                file=sys.stderr,
+            )
+            raise SystemExit(115)
 
-    cache_dir.mkdir(exist_ok=True)
+        # rebuild
+        make_cache_dirs()
 
-    # version = "0.0.0"
+        with open(version_file, "w") as file:
+            file.write(__version__)
+
+    return build_dir, cache_dir
+
+
+async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
+    global DEFAULT_PORT, DEFAULT_SCRIPT, APP_CACHE, required
+
+    DEFAULT_SCRIPT = mainscript or DEFAULT_SCRIPT
+
+    build_dir, cache_dir = cache_check(app_folder, devmode)
 
     sys.argv.pop()
 
@@ -145,9 +217,7 @@ async def main_run(patharg, cdn=DEFAULT_CDN):
         help="Specify if window will ask confirmation for closing [default:%s]" % 0,
     )
 
-    parser.add_argument(
-        "--cache", default=cache_dir.as_posix(), help="md5 based url cache directory"
-    )
+    parser.add_argument("--cache", default=cache_dir.as_posix(), help="md5 based url cache directory")
 
     parser.add_argument(
         "--package",
@@ -163,9 +233,7 @@ async def main_run(patharg, cdn=DEFAULT_CDN):
         help="override prebuilt version path [default:%s]" % __version__,
     )
 
-    parser.add_argument(
-        "--build", action="store_true", help="build only, do not run test server"
-    )
+    parser.add_argument("--build", action="store_true", help="build only, do not run test server")
 
     parser.add_argument(
         "--html",
@@ -173,13 +241,9 @@ async def main_run(patharg, cdn=DEFAULT_CDN):
         help="build as html with embedded assets (pygame-script)",
     )
 
-    parser.add_argument(
-        "--no_opt", action="store_true", help="turn off assets optimizer"
-    )
+    parser.add_argument("--no_opt", action="store_true", help="turn off assets optimizer")
 
-    parser.add_argument(
-        "--archive", action="store_true", help="make build/web.zip archive for itch.io"
-    )
+    parser.add_argument("--archive", action="store_true", help="make build/web.zip archive for itch.io")
 
     #    parser.add_argument(
     #        "--main",
@@ -205,9 +269,7 @@ async def main_run(patharg, cdn=DEFAULT_CDN):
         help="index.html template [default:%s]" % DEFAULT_TMPL,
     )
 
-    parser.add_argument(
-        "--ssl", default=False, help="enable ssl with server.pem and key.pem"
-    )
+    parser.add_argument("--ssl", default=False, help="enable ssl with server.pem and key.pem")
 
     parser.add_argument(
         "--port",
@@ -236,7 +298,7 @@ ________________________
 # the app folder
 app_folder={app_folder}
 
-# artefacts directoty
+# artefacts directory
 build_dir={build_dir}
 
 # the window title and icon name
@@ -245,7 +307,7 @@ app_name={app_name}
 # package name, better make it unique
 package={args.package}
 
-# icon 96x96 for dekstop 16x16 for web
+# icons:  96x96 for desktop, 16x16 for web
 icon={args.icon}
 
 # js/wasm provider
@@ -366,9 +428,7 @@ now packing application ....
 
     if template_file.is_file():
         with template_file.open("r", encoding="utf-8") as source:
-            with open(
-                build_dir.joinpath("index.html").resolve(), "w", encoding="utf-8"
-            ) as target:
+            with open(build_dir.joinpath("index.html").resolve(), "w", encoding="utf-8") as target:
                 # while ( line := source.readline()):
                 while True:
                     line = source.readline()
@@ -395,7 +455,6 @@ now packing application ....
             return
 
         elif not args.build:
-
             from . import testserver
 
             testserver.run_code_server(args, CC)
@@ -411,3 +470,15 @@ build_dir = {build_dir}
             )
     else:
         print(args.template, "is not a valid template")
+
+
+def main():
+    app_folder, mainscript = set_args(sys.argv[-1])
+
+    # sim does not use cache.
+    if "--sim" in sys.argv:
+        print(f"To use simulator launch with : {sys.executable} -m pygbag {' '.join(sys.argv[1:])}")
+        return 1
+    else:
+        asyncio.run(main_run(app_folder, mainscript))
+    return 0

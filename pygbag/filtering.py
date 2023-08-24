@@ -8,7 +8,7 @@ def filter(walked):
     for folder, filenames in walked:
         blocking = False
 
-        for block in ["/.git", "/.github", "/build", "/venv"]:
+        for block in ["/.git", "/.github", "/build", "/venv", "/ignore", "/.idea"]:
             if folder.match(block):
                 if dbg:
                     print("REJ 1", folder)
@@ -33,7 +33,7 @@ def filter(walked):
                 continue
 
             ext = filename.rsplit(".", 1)[-1].lower()
-            if ext in ["pyc", "pyx", "pyd", "pyi", "exe", "log"]:
+            if ext in ["pyc", "pyx", "pyd", "pyi", "exe", "log", "DS_Store"]:
                 if dbg:
                     print("REJ 4", folder, filename)
                 continue

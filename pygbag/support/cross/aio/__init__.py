@@ -5,6 +5,7 @@ from time import time as time_time
 
 
 DEBUG = True
+NICE = 0.010
 
 builtins.aio = sys.modules[__name__]
 
@@ -15,15 +16,15 @@ try:
     import embed
 
     def pdb(*argv):
-        #print(*argv, file=sys.__stderr__)
+        # print(*argv, file=sys.__stderr__)
         pass
 
-    #builtins.pdb = embed.log
+    # builtins.pdb = embed.log
     builtins.pdb = pdb
 except:
 
     def pdb(*argv):
-        #print(*argv, file=sys.__stderr__)
+        # print(*argv, file=sys.__stderr__)
         pass
 
     builtins.pdb = pdb
@@ -187,6 +188,7 @@ def defer(fn, argv=(), kw={}, delay=0, framerate=60):
 
 inloop = False
 
+
 # this runs both asyncio loop and the arduino style stepper
 def step(*argv):
     global inloop, last_state, paused, started, loop, oneshots, protect
@@ -205,7 +207,6 @@ def step(*argv):
         return
 
     try:
-
         # TODO: OPTIM: remove later
         if inloop:
             pdb("97: FATAL: aio loop not re-entrant !")
@@ -282,6 +283,11 @@ def delta(t=None):
     return time_time() - enter
 
 
+def shed_yield():
+    global enter, NICE
+    return (time_time() - enter) > NICE
+
+
 async def sleep_ms(ms=0):
     await sleep(float(ms) / 1000)
 
@@ -316,25 +322,29 @@ def create_task(coro, *, name=None, context=None):
     return task
 
 
-# save orignal asyncio.run in case platform does not support readline hooks.
-# __run__ = run
-
 #
 run_called = False
 
 
 def run(coro, *, debug=False):
-
     global paused, loop, started, step, DEBUG, run_called, exit
 
     debug = debug or DEBUG
 
     if coro is not None:
-        task = loop.create_task(coro)
-        _set_task_name(task, coro.__name__)
+        wrapper = coro
+        if coro.__name__ == "main":
+            if "aio.fetch" in sys.modules:
 
-    elif debug:
-        pdb("253:None coro called, just starting loop")
+                async def __main__():
+                    import aio.fetch
+
+                    await aio.fetch.preload()
+                    await coro
+
+                wrapper = __main__()
+        task = loop.create_task(wrapper)
+        _set_task_name(task, coro.__name__)
 
     if not started:
         exit = False
@@ -351,16 +361,25 @@ def run(coro, *, debug=False):
         # https://developer.mozilla.org/en-US/docs/Web/API/window/requestAnimationFrame
         elif __EMSCRIPTEN__ or __wasi__:
             # handle special custom_site() case
-            if coro.__name__ == "custom_site":
+            if coro.__name__ == "import_site":
                 embed.run()
                 run_called = False
-            else:
+            elif coro.__name__ == "custom_site":
+                run_called = False
+            elif not aio.cross.simulator:
                 # let prelinker start asyncio loop
                 print("AIO will auto-start at 0+, now is", embed.counter())
 
         # fallback to blocking asyncio
         else:
-            loop.run_forever()
+            asyncio.events._set_running_loop(None)
+            # TODO: implement RaF from here
+            try:
+                loop.run_forever()
+            except KeyboardInterrupt:
+                loop.close()
+
+        print(f"378: asyncio.run({coro=})")
     elif run_called:
         pdb("273: aio.run called twice !!!")
 
@@ -432,13 +451,6 @@ except:
 
 def rtclock():
     return int(Time.time() * 1_000)
-
-
-def prompt_request():
-    try:
-        embed.prompt_request()
-    except:
-        aio.defer(embed.prompt, (), {}, delay=100)
 
 
 class after:

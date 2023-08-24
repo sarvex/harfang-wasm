@@ -24,7 +24,7 @@ export DYNLOAD=${SDKROOT}/prebuilt/emsdk/${PYBUILD}/lib-dynload
 
 echo "
     *   building loader $(pwd) for ${VENDOR} / ${PACKAGES}
-            PYBUILD=$PYBUILD
+            PYBUILD=$PYBUILD python${PYMAJOR}${PYMINOR}
             EMFLAVOUR=$EMFLAVOUR
             EMSDK=$EMSDK
             SDKROOT=$SDKROOT
@@ -32,6 +32,7 @@ echo "
             HPY=$HPY
             LD_VENDOR=$LD_VENDOR
 " 1>&2
+
 
 
 # SDL2_image turned off : -ltiff
@@ -93,22 +94,40 @@ else
 "
 fi
 
+if [ -d /data/git/platform_wasm ]
+then
+    cp -Rf /data/git/platform_wasm ./
+else
+    if [ -d platform_wasm ]
+    then
+        pushd platform_wasm
+        git pull
+        popd
+    else
+        git clone https://github.com/pygame-web/platform_wasm
+    fi
+fi
+
+
+export PATCH_FS="--preload-file $(realpath platform_wasm/platform_wasm)@/data/data/org.python/assets/site-packages/platform_wasm"
+
 
 LOPTS="-sMAIN_MODULE --bind -fno-rtti"
 
 # O0/g3 is much faster to build and easier to debug
 
+
 echo "  ************************************"
 if [ -f dev ]
 then
-    export COPTS="-O0 -g3 -fPIC"
-
+    export COPTS="-O1 -g1 -fPIC"
     echo "       building DEBUG $COPTS"
-    LOPTS="$LOPTS -s ASSERTIONS=0"
+    LOPTS="$LOPTS -sASSERTIONS=0"
     ALWAYS_FS="--preload-file ${ALWAYS_CODE}@/data/data/org.python/assets"
 else
+    export COPTS="-Os -g0 -fPIC"
     echo "       building RELEASE $COPTS"
-    LOPTS="$LOPTS -s ASSERTIONS=0 -s LZ4=1"
+    LOPTS="$LOPTS -sASSERTIONS=0 -sLZ4"
     ALWAYS_FS=""
 fi
 
@@ -204,7 +223,13 @@ then
     # --preload-file ${ROOT}/support/xterm@/etc/termcap \
 
 
-    LDFLAGS="$LD_VENDOR"
+# TODO: test -sWEBGL2_BACKWARDS_COMPATIBILITY_EMULATION
+
+#
+#  -sWEBGL2_BACKWARDS_COMPATIBILITY_EMULATION
+    LDFLAGS="$LD_VENDOR -sUSE_GLFW=3 -sUSE_WEBGL2 -sMIN_WEBGL_VERSION=2 -sOFFSCREENCANVAS_SUPPORT=1 -sFULL_ES2 -sFULL_ES3"
+
+#    LDFLAGS="$LD_VENDOR -sUSE_GLFW=3 -sUSE_WEBGL2 -sMIN_WEBGL_VERSION=2 -sMAX_WEBGL_VERSION=2 -sFULL_ES2"
 
     if echo ${PYBUILD}|grep -q 10$
     then
@@ -215,7 +240,16 @@ then
 
     LDFLAGS="$LDFLAGS $LD_SDL2 -lffi -lbz2 -lz -ldl -lm"
 
-    for lib in python mpdec expat
+    LINKPYTHON="python mpdec expat"
+
+
+    if  echo $PYBUILD|grep -q 3.12
+    then
+        LINKPYTHON="Hacl_Hash_SHA2 $LINKPYTHON"
+    fi
+
+
+    for lib in $LINKPYTHON
     do
         cpylib=${SDKROOT}/prebuilt/emsdk/lib${lib}${PYBUILD}.a
         if [ -f $cpylib ]
@@ -223,6 +257,7 @@ then
             LDFLAGS="$LDFLAGS $cpylib"
         fi
     done
+
 
     for lib in $PACKAGES
     do
@@ -236,25 +271,46 @@ then
 
     " 1>&2
 
-    if emcc -m32 $FINAL_OPTS $LOPTS -std=gnu99 -D__PYDK__=1 -DNDEBUG\
-     -s TOTAL_MEMORY=256MB -s ALLOW_TABLE_GROWTH -sALLOW_MEMORY_GROWTH \
-     $CF_SDL \
-     --use-preload-plugins \
-     $STDLIBFS \
-     $ALWAYS_FS \
-     $SUPPORT_FS \
-     --preload-file ${DYNLOAD}@/usr/lib/python${PYBUILD}/lib-dynload \
-     --preload-file ${REQUIREMENTS}@/data/data/org.python/assets/site-packages \
-     -o ${DIST_DIR}/python${PYMAJOR}${PYMINOR}/${MODE}.js build/${MODE}.o \
+    cat > final_link.sh <<END
+#!/bin/bash
+emcc -m32 $FINAL_OPTS $LOPTS -std=gnu99 -D__PYDK__=1 -DNDEBUG \\
+     -sTOTAL_MEMORY=256MB -sSTACK_SIZE=4MB -sALLOW_TABLE_GROWTH -sALLOW_MEMORY_GROWTH \\
+     $CF_SDL \\
+     --use-preload-plugins \\
+     $STDLIBFS \\
+     $ALWAYS_FS \\
+     $SUPPORT_FS \\
+     $PATCH_FS \\
+     --preload-file ${DYNLOAD}@/usr/lib/python${PYBUILD}/lib-dynload \\
+     --preload-file ${REQUIREMENTS}@/data/data/org.python/assets/site-packages \\
+     -o ${DIST_DIR}/python${PYMAJOR}${PYMINOR}/${MODE}.js build/${MODE}.o \\
      $LDFLAGS
+
+END
+    chmod +x ./final_link.sh
+    if ./final_link.sh
     then
         rm build/${MODE}.o
         du -hs ${DIST_DIR}/*
         echo Total
         echo _________
+
         if $CI
         then
-            cp -r static/* ${DIST_DIR}/
+            if [ -f /pp ]
+            then
+                USECP=false
+            else
+                USECP=true
+            fi
+        else
+            USECP=false
+        fi
+
+
+        if $USECP
+        then
+            cp -R static/* ${DIST_DIR}/
             cp pygbag/support/pythonrc.py ${DIST_DIR}/pythonrc.py
             # for simulator
             cp pygbag/support/pythonrc.py ${SDKROOT}/support/
@@ -274,8 +330,14 @@ then
             done
             popd
         fi
-
-        du -hs ${DIST_DIR}
+#echo "
+#    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#    emsdk tot js gen temp fix
+#    @@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@@
+#"
+#        sed -i 's/_glfwSetWindowContentScaleCallback_sig=iii/_glfwSetWindowContentScaleCallback_sig="iii"/g' \
+#         ${DIST_DIR}/python${PYMAJOR}${PYMINOR}/${MODE}.js
+        du -hs ${DIST_DIR}/python*
     else
         echo "pymain+loader linking failed"
         exit 178

@@ -32,17 +32,17 @@ else
 
     # update cython
     TEST_CYTHON=$($HPY -m cython -V 2>&1)
-    if echo $TEST_CYTHON| grep -q 3.0.0a11$
+    if echo $TEST_CYTHON| grep -q 3.0.0$
     then
         echo "  * not upgrading cython $TEST_CYTHON
 " 1>&2
     else
-        echo "  * upgrading cython $TEST_CYTHON to 3.0.0a11+
+        echo "  * upgrading cython $TEST_CYTHON to 3.0.0
 "  1>&2
         #$SYS_PYTHON -m pip install --user --upgrade git+https://github.com/cython/cython.git
-        CYTHON=${CYTHON:-Cython-3.0.0a11-py2.py3-none-any.whl}
+        CYTHON=${CYTHON:-Cython-3.0.0-py2.py3-none-any.whl}
         pushd build
-        wget -q -c https://github.com/cython/cython/releases/download/3.0.0a11/${CYTHON}
+        wget -q -c https://github.com/cython/cython/releases/download/3.0.0/${CYTHON}
         $HPY -m pip install $CYTHON
         popd
 
@@ -52,41 +52,63 @@ fi
 mkdir -p src
 pushd $(pwd)/src
 
-if true
-then
-    echo "
-    * using pygame-wasm WIP repo
+
+echo "
+* using main pygame-ce repo
 " 1>&2
-    PG_BRANCH="pygame-wasm"
-    PG_GIT="https://github.com/pmp-p/pygame-wasm.git"
+PG_BRANCH="main"
+PG_GIT="https://github.com/pygame-community/pygame-ce.git"
+
+if ${CI:-true}
+then
+    if [ -d pygame-wasm ]
+    then
+        pushd $(pwd)/pygame-wasm
+        git restore .
+        git pull
+    else
+        git clone --no-tags --depth 1 --single-branch --branch $PG_BRANCH $PG_GIT pygame-wasm
+        pushd $(pwd)/pygame-wasm
+    fi
+
+    #unsure
+    wget -O- https://patch-diff.githubusercontent.com/raw/pmp-p/pygame-ce-wasm/pull/3.diff | patch -p1
+
+
+    # cython3
+    wget -O- https://patch-diff.githubusercontent.com/raw/pygame-community/pygame-ce/pull/2395.diff | patch -p1
+
 
 else
+    pushd $(pwd)/pygame-wasm
     echo "
-    * using main pygame repo
-" 1>&2
-    PG_BRANCH="main"
-    PG_GIT="https://github.com/pygame/pygame.git"
-fi
 
 
-if [ -d pygame-wasm ]
-then
-    pushd $(pwd)/pygame-wasm
-    git restore .
-    git pull
-    rm -rf build Setup
-else
-    git clone --no-tags --depth 1 --single-branch --branch $PG_BRANCH $PG_GIT pygame-wasm
-    pushd $(pwd)/pygame-wasm
+
+
+
+
+                NOT UPDATING PYGAME, TEST MODE
+
+
+
+
+
+
+"
+    read
+
 fi
 
 # test patches go here
 # ===================
-
 # patch -p1 <<END
-# END
 
+# END
+    rm -rf build Setup
 # ===================
+
+
 
 pwd
 env|grep PY
@@ -125,7 +147,6 @@ then
         OBJS=$(find build/temp.wasm32-*/|grep o$)
 
 
-
         $SDKROOT/emsdk/upstream/emscripten/emar rcs ${SDKROOT}/prebuilt/emsdk/libpygame${PYBUILD}.a $OBJS
         for obj in $OBJS
         do
@@ -150,16 +171,28 @@ popd
 
 TAG=${PYMAJOR}${PYMINOR}
 
+
+echo "FIXME: build wheel"
+
+
 if [ -d testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten ]
 then
+    TARGET=testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten/pygame_static.cpython-${TAG}-wasm32-emscripten.so
 
     . ${SDKROOT}/emsdk/emsdk_env.sh
 
-    emcc -Os -g0 -shared -fpic -o \
-     testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten/pygame_static.cpython-${TAG}-wasm32-emscripten.so \
-     $SDKROOT/prebuilt/emsdk/libpygame${PYMAJOR}.${PYMINOR}.a
-fi
+    [ -f $TARGET ] && rm $TARGET
 
+    emcc -shared -Os -g0 -fpic -o $TARGET $SDKROOT/prebuilt/emsdk/libpygame${PYMAJOR}.${PYMINOR}.a
+
+    if [ -f /data/git/archives/repo/norm.sh ]
+    then
+        pushd testing/pygame_static-1.0-cp${TAG}-cp${TAG}-wasm32_mvp_emscripten
+        /data/git/archives/repo/norm.sh
+        rm $TARGET
+        popd
+    fi
+fi
 
 
 

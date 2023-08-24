@@ -21,14 +21,87 @@ def generate_predictable_names():
 def transform_source(source: str) -> str:
     src = transform_source_nobreak(source)
     src = transform_source_repeat(src)
-    src = transform_source_switch(src)
+    # faulty
+    # src = transform_source_switch(src)
     src = transform_source_sched_yield(src)
-    return src
+
+    # py => nim
+    lines = source.split("\n")
+
+    defcpp = {"include ": "include ", "if ": "when ", "else": "else:", "endif": "pass"}
+
+    nim_mode = False
+
+    for idx, l in enumerate(lines):
+        ll = l.lstrip(" ")
+
+        if not len(ll):
+            continue
+
+        if ll.startswith('"""#!nim'):
+            lines[idx] = "#nim:Begin"
+            nim_mode = True
+
+        elif ll.startswith('"""  #!nim'):
+            lines[idx] = "#nim:End"
+            nim_mode = False
+
+        # FIXME: before black
+        if not nim_mode:
+            if ll.strip() == "var" or ll.startswith("var "):
+                lines[idx] = l.replace("var", "if 1:")
+
+        if ll.rstrip() == "...":
+            lines[idx] = l.replace("...", "pass")
+
+        if ll[0] == "#":
+            pos = l.find("#")
+            head = l[:pos]
+            trail = ""
+            for tag, value in defcpp.items():
+                if ll.startswith(f"#{tag}"):
+                    trail = ll[1:].replace(tag, value)
+                elif ll.startswith(f"# {tag}"):
+                    trail = ll[2:].replace(tag, value)
+                elif ll.startswith(f"#!{tag}"):
+                    trail = ll[2:].replace(tag, value)
+                else:
+                    continue
+                break
+
+            if trail:
+                lines[idx] = head + trail
+                continue
+
+            if ll.startswith("##nim "):
+                lines[idx] = l.replace("##nim ", "")
+                continue
+
+        elif l.find(", end=") >= 0:
+            # TODO: will fail on  , end="x", sep=","
+
+            pos = l.find("print(")
+            head = l[:pos]
+
+            if pos >= 0:
+                print("=" * 80)
+                l = l[pos + 6 :].rstrip(") ")
+                l, endl = l.rsplit(", end=", 1)
+                # print(f'{l=}{endl=}')
+                lines[idx] = f"{head}write(stdout, {l});write(stdout, {endl})"
+                print("=" * 80)
+                # lines[idx] = l.replace(', end=','
+
+    return "\n".join(lines)
 
 
-def transform_file(filename: str):
-    with open("extended_syntax.py", "r") as sourcefile:
-        return transform_source(sourcefile.read())
+def transform_file(filename: str, out: str = ""):
+    with open(filename, "r") as sourcefile:
+        source = transform_source(sourcefile.read())
+        if out:
+            with open(out, "w") as file:
+                file.write(source)
+        return source
 
 
 # =============================================================================
@@ -105,8 +178,7 @@ def transform_source_repeat(source, callback_params=None, **_kwargs):
             last_token = token_utils.get_last(tokens)
             if last_token != ":":
                 raise RepeatSyntaxError(
-                    "Missing colon for repeat statement on line "
-                    + f"{first_token.start_row}\n    {first_token.line}."
+                    "Missing colon for repeat statement on line " + f"{first_token.start_row}\n    {first_token.line}."
                 )
 
             repeat_index = token_utils.get_first_index(tokens)
@@ -150,13 +222,13 @@ def transform_source_switch(source, callback_params=None, **_kwargs):
 
         var_name = EXPR
         if var_name == EXPR_1:
-                SUITE
+            SUITE
         elif var_name == EXPR_2:
-                SUITE
+            SUITE
         elif var_name in EXPR_3, EXPR_4, ...:
-                SUITE
+            SUITE
         else:
-                SUITE
+            SUITE
         del var_name
 
     Limitation: switch blocks cannot be part of a SUITE of another switch block.
@@ -181,7 +253,9 @@ def transform_source_switch(source, callback_params=None, **_kwargs):
 
         if len(line) > 1:
             _index = token_utils.get_first_index(line)
+            print("205:", line)
             second_token = line[_index + 1]
+
         else:
             second_token = None
 
@@ -222,7 +296,6 @@ def transform_source_switch(source, callback_params=None, **_kwargs):
 
 
 def transform_source_sched_yield(source, **_kwargs):
-    """This performs a simple replacement of ``function`` by ``lambda``."""
     new_tokens = []
     skip = 0
     for token in token_utils.tokenize(source):
@@ -244,3 +317,68 @@ def transform_source_sched_yield(source, **_kwargs):
         new_tokens.append(token)
 
     return token_utils.untokenize(new_tokens)
+
+
+# =============================================================================
+
+
+def transform_coordinates(source, **_kwargs):
+    """This adds a multiplication symbol where it would be understood as
+    being implicit by the normal way algebraic equations are written but would
+    be a SyntaxError in Python. Thus we have::
+        2n  -> 2*n
+        n 2 -> n* 2
+        2(a+b) -> 2*(a+b)
+        (a+b)2 -> (a+b)*2
+        2 3 -> 2* 3
+        m n -> m* n
+        (a+b)c -> (a+b)*c
+    The obvious one (in algebra) being left out is something like ``n(...)``
+    which is a function call - and thus valid Python syntax.
+    """
+
+    tokens = token_utils.tokenize(source)
+    if not tokens:
+        return tokens
+
+    prev_token = tokens[0]
+    new_tokens = [prev_token]
+
+    store = []
+    flush = False
+
+    def do_flush(tok):
+        nonlocal flush, store
+        flush = True
+        store.append(tok)
+
+    for token in tokens[1:]:
+        # The code has been written in a way to demonstrate that this type of
+        # transformation could be done as the source is tokenized by Python.
+        if prev_token.is_number() and (token.is_identifier() or token.is_number() or token == "("):
+            do_flush(" x1 ")
+
+        if prev_token.is_identifier() and (token.is_identifier() or token.is_number()):
+            do_flush(" x2 ")
+
+        if prev_token == ")" and (token.is_identifier() or token.is_number()):
+            do_flush(" x3 ")
+
+        if flush:
+            new_tokens.extend(store)
+            store.clear()
+            flush = False
+        else:
+            new_tokens.append(token)
+
+        prev_token = token
+
+    return token_utils.untokenize(new_tokens)
+
+
+if __name__ == "__main__":
+    import sys
+
+    print(sys.argv[-1])
+    with open(sys.argv[-1], "rb") as file:
+        print(transform_coordinates(file.read().decode("utf-8")))
