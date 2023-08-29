@@ -31,10 +31,7 @@ this = __import__(__name__)
 try:
     __UPY__
 except:
-    if hasattr(sys.implementation, "mpy"):
-        builtins.__UPY__ = this
-    else:
-        builtins.__UPY__ = None
+    builtins.__UPY__ = this if hasattr(sys.implementation, "mpy") else None
 
 if hasattr(sys, "_emscripten_info"):
     is_browser = not sys._emscripten_info.runtime.startswith("Node.js")
@@ -144,8 +141,7 @@ if is_browser:
             # TODO resolve whole path
             if hasattr(__import__("__main__"), method):
                 client = getattr(__import__("__main__"), method)
-                is_coro = inspect.iscoroutinefunction(client)
-                if is_coro:
+                if is_coro := inspect.iscoroutinefunction(client):
                     await client(*argv)
                 else:
                     client(*argv)
@@ -194,9 +190,7 @@ ROOTDIR = f"/data/data/{sys.argv[0]}/assets"
 def explore(root):
     global prelist, preld_counter
 
-    if preld_counter < 0:
-        preld_counter = 0
-
+    preld_counter = max(preld_counter, 0)
     import shutil
 
     for current, dirnames, filenames in os.walk(root):
@@ -281,7 +275,7 @@ def run_main(PyConfig, loaderhome=None, loadermain="main.py"):
             pdb(f"{ROOTDIR=}")
             pdb(f"{os.getcwd()=}")
 
-        print(f"284: assets found :", preld_counter)
+        print("284: assets found :", preld_counter)
         if not preld_counter:
             embed.run()
 

@@ -28,8 +28,7 @@ https://github.com/scour-project/scour
 if sys.platform != "linux":
 
     def optimize(folder, filenames, **kw):
-        for filename in filenames:
-            yield filename
+        yield from filenames
 
 else:
 
@@ -69,9 +68,7 @@ else:
         for fp in filenames:
             if fp.suffix == ".png":
                 if png_quality >= 0:
-                    if fp.stem.endswith("-pygbag"):
-                        pass  # yield that file
-                    else:
+                    if not fp.stem.endswith("-pygbag"):
                         # .with_stem() 3.9+
                         opt = Path(f"{folder}/{fp.parent}/{fp.stem}-pygbag.png")
 
@@ -89,9 +86,7 @@ else:
                             print("ERROR", osexec, "for", opt)
 
             elif fp.suffix in [".mp3", ".wav", ".ogg", ".flac"]:
-                if fp.stem.endswith("-pygbag"):
-                    pass  # yield that file
-                else:
+                if not fp.stem.endswith("-pygbag"):
                     opt = Path(f"{folder}/{fp.parent}/{fp.stem}-pygbag.ogg")
                     if opt.is_file():
                         # this is the no opt source, skip it

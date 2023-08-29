@@ -218,7 +218,7 @@ def step(*argv):
             if not exit:
                 pdb(f" - aio is {'paused' if paused else 'resuming'} -")
             else:
-                print(f" - aio is exiting -")
+                print(" - aio is exiting -")
             last_state = paused
 
         ticks += 1
@@ -278,9 +278,7 @@ def step(*argv):
 
 def delta(t=None):
     global enter
-    if t:
-        return t - enter
-    return time_time() - enter
+    return t - enter if t else time_time() - enter
 
 
 def shed_yield():
@@ -518,11 +516,7 @@ class _(list):
         len(self) and self.pop()
 
     def __bool__(self):
-        if self.__class__.current:
-            return True
-        if len(self) and self[-1]:
-            return True
-        return False
+        return True if self.__class__.current else bool(len(self) and self[-1])
 
     def __call__(self, frametime):
         print("__call__", len(self), frametime)

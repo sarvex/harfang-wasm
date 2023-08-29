@@ -17,7 +17,7 @@ class tui:
         self.out("\x1b8\x1b[?25h")
 
     def __call__(self, *a, **kw):
-        self.out("\x1b[{};{}H{}".format(kw.get("z", 12), kw.get("x", 40), " ".join(a)))
+        self.out(f'\x1b[{kw.get("z", 12)};{kw.get("x", 40)}H{" ".join(a)}')
 
 
 def step(x=70, y=0, z=2):
@@ -27,11 +27,11 @@ def step(x=70, y=0, z=2):
         lines = t.split("\n")
         fill = "─" * len(t)
         if z > 1:
-            print("┌%s┐" % fill, x=x, z=z - 1)
+            print(f"┌{fill}┐", x=x, z=z - 1)
         for t in lines:
-            print("│%s│" % t, x=x, z=z)
+            print(f"│{t}│", x=x, z=z)
             z += 1
-        print("└%s┘" % fill, x=x, z=z)
+        print(f"└{fill}┘", x=x, z=z)
 
     with tui() as print:
         # draw a clock

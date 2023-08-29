@@ -178,7 +178,7 @@ def transform_source_repeat(source, callback_params=None, **_kwargs):
             last_token = token_utils.get_last(tokens)
             if last_token != ":":
                 raise RepeatSyntaxError(
-                    "Missing colon for repeat statement on line " + f"{first_token.start_row}\n    {first_token.line}."
+                    f"Missing colon for repeat statement on line {first_token.start_row}\n    {first_token.line}."
                 )
 
             repeat_index = token_utils.get_first_index(tokens)
@@ -193,7 +193,7 @@ def transform_source_repeat(source, callback_params=None, **_kwargs):
                 first_token.string = "while"
                 second_token.string = "not"
             else:
-                first_token.string = "for %s in range(" % next(variable_name)
+                first_token.string = f"for {next(variable_name)} in range("
                 last_token.string = "):"
 
         new_tokens.extend(tokens)
@@ -259,26 +259,18 @@ def transform_source_switch(source, callback_params=None, **_kwargs):
         else:
             second_token = None
 
-        if not switch_block:
-            if first_token == "switch":
-                switch_indent = first_token.start_col
-                var_name = next(variable_name)
-                first_token.string = f"{var_name} ="
-                switch_block = True
-                first_case = True
-                colon = token_utils.get_last(line)
-                colon.string = ""
-        else:
+        if switch_block:
             if first_token.start_col == switch_indent:
                 switch_block = False
                 new_tokens.extend([" " * switch_indent + f"del {var_name}\n"])
 
-            elif first_token == "case" or first_token == "else":
+            elif first_token in ["case", "else"]:
                 if first_case and first_token == "case":
-                    if second_token == "in":
-                        first_token.string = f"if {var_name}"
-                    else:
-                        first_token.string = f"if {var_name} =="
+                    first_token.string = (
+                        f"if {var_name}"
+                        if second_token == "in"
+                        else f"if {var_name} =="
+                    )
                     first_case = False
                 elif first_token == "case":
                     if second_token == "in":
@@ -288,6 +280,14 @@ def transform_source_switch(source, callback_params=None, **_kwargs):
                 dedent = first_token.start_col - switch_indent
                 line = token_utils.dedent(line, dedent)
 
+        elif first_token == "switch":
+            switch_indent = first_token.start_col
+            var_name = next(variable_name)
+            first_token.string = f"{var_name} ="
+            switch_block = True
+            first_case = True
+            colon = token_utils.get_last(line)
+            colon.string = ""
         new_tokens.extend(line)
     return token_utils.untokenize(new_tokens)
 

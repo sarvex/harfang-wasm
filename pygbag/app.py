@@ -191,30 +191,30 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
     parser.add_argument(
         "--directory",
         default=build_dir.as_posix(),
-        help="Specify alternative directory [default:%s]" % build_dir,
+        help=f"Specify alternative directory [default:{build_dir}]",
     )
 
     parser.add_argument(
         "--PYBUILD",
         default="3.11",
-        help="Specify python version [default:%s]" % "3.11",
+        help='Specify python version [default:3.11]',
     )
     parser.add_argument(
         "--app_name",
         default=app_folder.name,
-        help="Specify user facing name of application [default:%s]" % app_folder.name,
+        help=f"Specify user facing name of application [default:{app_folder.name}]",
     )
 
     parser.add_argument(
         "--ume_block",
         default=1,
-        help="Specify wait for user media engagement before running [default:%s]" % 1,
+        help='Specify wait for user media engagement before running [default:1]',
     )
 
     parser.add_argument(
         "--can_close",
         default=0,
-        help="Specify if window will ask confirmation for closing [default:%s]" % 0,
+        help='Specify if window will ask confirmation for closing [default:0]',
     )
 
     parser.add_argument("--cache", default=cache_dir.as_posix(), help="md5 based url cache directory")
@@ -230,7 +230,7 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
     parser.add_argument(
         "--version",
         default=__version__,
-        help="override prebuilt version path [default:%s]" % __version__,
+        help=f"override prebuilt version path [default:{__version__}]",
     )
 
     parser.add_argument("--build", action="store_true", help="build only, do not run test server")
@@ -258,15 +258,13 @@ async def main_run(app_folder, mainscript, cdn=DEFAULT_CDN):
     )
 
     parser.add_argument(
-        "--cdn",
-        default=cdn,
-        help="web site to cache locally [default:%s]" % cdn,
+        "--cdn", default=cdn, help=f"web site to cache locally [default:{cdn}]"
     )
 
     parser.add_argument(
         "--template",
         default=DEFAULT_TMPL,
-        help="index.html template [default:%s]" % DEFAULT_TMPL,
+        help=f"index.html template [default:{DEFAULT_TMPL}]",
     )
 
     parser.add_argument("--ssl", default=False, help="enable ssl with server.pem and key.pem")
@@ -342,7 +340,7 @@ now packing application ....
     def cache_file(remote_url, suffix):
         nonlocal cache_dir
         cache = hashlib.md5(remote_url.encode()).hexdigest()
-        cached = cache_dir.joinpath(cache + "." + suffix)
+        cached = cache_dir.joinpath(f"{cache}.{suffix}")
         return cached
 
     # get local or online template in order

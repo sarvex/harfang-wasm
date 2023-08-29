@@ -99,7 +99,7 @@ async def archive(apkname, target_folder, build_dir=None):
 
     if "--html" in sys.argv:
         REPLAY.HTML = True
-        html_embed(target_folder, packlist, apkname[:-4] + ".html")
+        html_embed(target_folder, packlist, f"{apkname[:-4]}.html")
         return
 
     try:

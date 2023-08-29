@@ -25,11 +25,9 @@ def define(tag, value):
     else:
         info = "?:?"
 
-    redef = defined(tag)
-    if redef:
+    if redef := defined(tag):
         if redef is value:
             pdb(f"INFO: {tag} redefined from {defines.get(tag)} at {info}")
-            pass
         else:
             pdb(
                 f"""\

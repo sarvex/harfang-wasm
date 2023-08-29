@@ -68,16 +68,14 @@ class CodeHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_GET(self):
-        f = self.send_head()
-        if f:
+        if f := self.send_head():
             try:
                 self.copyfile(f, self.wfile)
             finally:
                 f.close()
 
     def do_HEAD(self):
-        f = self.send_head()
-        if f:
+        if f := self.send_head():
             f.close()
 
     def send_head(self):
@@ -89,7 +87,7 @@ class CodeHandler(SimpleHTTPRequestHandler):
             if not parts.path.endswith("/"):
                 # redirect browser - doing basically what apache does
                 self.send_response(HTTPStatus.MOVED_PERMANENTLY)
-                new_parts = (parts[0], parts[1], parts[2] + "/", parts[3], parts[4])
+                new_parts = parts[0], parts[1], f"{parts[2]}/", parts[3], parts[4]
                 new_url = urllib.parse.urlunsplit(new_parts)
                 self.send_header("Location", new_url)
                 self.end_headers()
@@ -116,8 +114,8 @@ class CodeHandler(SimpleHTTPRequestHandler):
         if not os.path.isfile(path) and not invalid:
             remote_url = CDN + self.path
             cache = hashlib.md5(remote_url.encode()).hexdigest()
-            d_cache = CACHE.joinpath(cache + ".data")
-            h_cache = CACHE.joinpath(cache + ".head")
+            d_cache = CACHE.joinpath(f"{cache}.data")
+            h_cache = CACHE.joinpath(f"{cache}.head")
             if not h_cache.is_file():
                 if VERB:
                     print("CACHING:", remote_url, "->", d_cache)
@@ -135,20 +133,19 @@ class CodeHandler(SimpleHTTPRequestHandler):
                 with h_cache.open() as fh:
                     while True:
                         l = fh.readline()
-                        if l.find(": ") > 0:
-                            k, v = l.strip().split(": ", 1)
-                            k = k.lower()
-                            if k in [
-                                "content-length",
-                                "access-control-allow-origin",
-                                "cross-origin-embedder-policy",
-                                "cross-origin-resource-policy",
-                                "cross-origin-opener-policy",
-                            ]:
-                                continue
-                            self.send_header(k, v)
-                        else:
+                        if l.find(": ") <= 0:
                             break
+                        k, v = l.strip().split(": ", 1)
+                        k = k.lower()
+                        if k in [
+                            "content-length",
+                            "access-control-allow-origin",
+                            "cross-origin-embedder-policy",
+                            "cross-origin-resource-policy",
+                            "cross-origin-opener-policy",
+                        ]:
+                            continue
+                        self.send_header(k, v)
                     # we have a cache so not first time, be less verbose
                     VERB = False
             cached = True
@@ -211,7 +208,7 @@ class CodeHandler(SimpleHTTPRequestHandler):
 
             if self.path.endswith(".py"):
                 if VERB:
-                    print(" --> do_GET(%s)" % path)
+                    print(f" --> do_GET({path})")
                 if fstring_decode:
                     content, _ = fstring_decode(f.read())
                     content = content.encode("UTF-8")
@@ -305,7 +302,7 @@ def code_server(
             sys.exit(0)
 
 
-if not ".wasm" in CodeHandler.extensions_map:
+if ".wasm" not in CodeHandler.extensions_map:
     print(
         "WARNING: wasm mimetype unsupported on that system, trying to correct",
         file=sys.stderr,
@@ -316,7 +313,7 @@ if not ".wasm" in CodeHandler.extensions_map:
 def run_code_server(args, cc):
     global CACHE, CDN, PROXY, BCDN, BPROXY
     CACHE = Path(args.cache)
-    CDN = "/".join(args.cdn.split("/")[0:3])
+    CDN = "/".join(args.cdn.split("/")[:3])
     PROXY = cc["proxy"]
 
     BCDN = CDN.encode("utf-8")

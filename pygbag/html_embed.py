@@ -59,9 +59,7 @@ with open("{vfs_name}","w") as fs:fs.write("""\\
 
 
 def make_header(html, line):
-    if line and line[0] == "<":
-        pass  # already a script shebang
-    else:
+    if not line or line[0] != "<":
         if line.find("pythons.js") > 0:
             # found script directives after #!
             SCRIPT = line[2:].strip()

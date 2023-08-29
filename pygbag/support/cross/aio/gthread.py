@@ -112,18 +112,18 @@ class Thread:
 
             if name is None:
                 try:
-                    self.name = "%s-%s" % (self.run.__name__, id(self))
+                    self.name = f"{self.run.__name__}-{id(self)}"
                 except:
                     pass
         else:
             target = self
 
         if self.name is None:
-            self.name = "%s-%s" % (self.__class__.__name__, id(self))
+            self.name = f"{self.__class__.__name__}-{id(self)}"
         self.status = None
 
     async def wrap(self):
-        for idle in self.run(*self.args, **self.kwargs):
+        for _ in self.run(*self.args, **self.kwargs):
             await aio.sleep(0)
 
     async def runner(self, coro):
@@ -142,8 +142,7 @@ class Thread:
             if self.status is True:
                 rtc = aio.rtclock()
                 self.delta = (rtc - self.last) - self.slice
-                if self.delta < 0:
-                    self.delta = 0
+                self.delta = max(self.delta, 0)
                 yield from aio.sleep_ms(self.slice - int(self.delta / 2))
                 self.last = rtc
 
@@ -154,8 +153,7 @@ class Thread:
             if self.status is True:
                 rtc = aio.rtclock()
                 self.delta = (rtc - self.last) - self.slice
-                if self.delta < 0:
-                    self.delta = 0
+                self.delta = max(self.delta, 0)
                 # no sleep_ms on cpy
                 yield from aio.sleep_ms(float(self.slice - int(self.delta / 2)) / 1_000).__await__()
                 # return aio.sleep( float(self.slice - int(self.delta / 2)) / 1_000 )
