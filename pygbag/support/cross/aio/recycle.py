@@ -13,17 +13,17 @@ def cleanup():
     for mod in list(sys.modules.keys()):
         if mod in ("asyncio"):
             continue
-        if not mod in MODULES:
+        if mod not in MODULES:
             sys.modules.pop(mod, None)
 
     md = vars(__import__("__main__"))
     for name in list(md.keys()):
-        if not name in MAIN:
+        if name not in MAIN:
             md.pop(name, None)
 
     md = vars(__import__("builtins"))
     for var in list(md.keys()):
-        if not name in BUILTINS:
+        if name not in BUILTINS:
             md.pop(name, None)
 
     del mod, name, md

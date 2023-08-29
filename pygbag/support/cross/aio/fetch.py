@@ -142,7 +142,7 @@ async def preload(chroot=None, chdir=True, silent=True, debug=False, standalone=
                     with open(filename, "wb") as destination:
                         destination.write(source.read())
             else:
-                localfile = Path(cwd.as_posix() + "/" + url)
+                localfile = Path(f"{cwd.as_posix()}/{url}")
                 if localfile.is_file():
                     if debug:
                         print(f"GET {localfile=} {chroot=} {filename=}")
@@ -281,7 +281,9 @@ window.Fetch.GET = function * GET (url)
         if self.is_emscripten:
             query_string = urlencode(params, doseq=doseq)
             await asyncio.sleep(0)
-            content = await platform.jsiter(platform.window.Fetch.GET(url + "?" + query_string))
+            content = await platform.jsiter(
+                platform.window.Fetch.GET(f"{url}?{query_string}")
+            )
             if self.debug:
                 self.print(content)
             self.result = content

@@ -40,20 +40,12 @@ def calls(frame, event, arg):
     if func_filename.find("/aio/") > 0:
         return
 
-    caller = frame.f_back
-    if caller:
+    if caller := frame.f_back:
         caller_line_no = caller.f_lineno
         caller_filename = caller.f_code.co_filename
         if caller_filename != func_filename:
             print(
-                "%s() on line %s of %s from line %s of %s"
-                % (
-                    func_name,
-                    func_line_no,
-                    func_filename,
-                    caller_line_no,
-                    caller_filename,
-                )
+                f"{func_name}() on line {func_line_no} of {func_filename} from line {caller_line_no} of {caller_filename}"
             )
         else:
             print(f"{func_name} {func_filename}:{caller_line_no}->{func_line_no}")

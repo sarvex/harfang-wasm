@@ -55,7 +55,7 @@ async def get_repo_pkg(pkg_file, pkg, resume, ex):
     import importlib
     from pathlib import Path
 
-    if not pkg_file in HISTORY:
+    if pkg_file not in HISTORY:
         sconf = sysconfig.get_paths()
         # sconf["platlib"] = os.environ.get("HOME","/tmp")
         platlib = sconf["platlib"]
@@ -122,13 +122,17 @@ class AsyncInteractiveConsole(code.InteractiveConsole):
 
         if self.shell is None:
 
+
+
+
             class shell:
                 coro = []
                 is_interactive = None
 
                 @classmethod
-                def parse_sync(shell, line, **env):
+                def parse_sync(cls, line, **env):
                     print("NoOp shell", line)
+
 
             self.shell = shell
         self.rv = None
@@ -179,15 +183,13 @@ class AsyncInteractiveConsole(code.InteractiveConsole):
 
         except ModuleNotFoundError as ex:
             print("181: FIXME dependency table for manually built modules")
-            get_pkg = self.opts.get("get_pkg", self.async_get_pkg)
-            if get_pkg:
+            if get_pkg := self.opts.get("get_pkg", self.async_get_pkg):
                 want = str(ex).split("'")[1]
                 self.shell.coro.append(get_pkg(want, ex, bc))
 
         except BaseException as ex:
             if self.one_liner:
-                shell = self.opts.get("shell", None)
-                if shell:
+                if shell := self.opts.get("shell", None):
                     # coro maybe be filled by shell exec
                     if shell.parse_sync(self.line):
                         return

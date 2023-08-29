@@ -62,10 +62,7 @@ class Channel(object):
         self._topic = ""
         self._key = None
         if self.server.state_dir:
-            self._state_path = "%s/%s" % (
-                self.server.state_dir,
-                name.replace("_", "__").replace("/", "_"),
-            )
+            self._state_path = f'{self.server.state_dir}/{name.replace("_", "__").replace("/", "_")}'
             self._read_state()
         else:
             self._state_path = None
@@ -159,7 +156,7 @@ class Client(object):
         if not self.__sent_ping and self.__timestamp + 90 < now:
             if self.__handle_command == self.__command_handler:
                 # Registered.
-                self.message("PING :%s" % self.server.name)
+                self.message(f"PING :{self.server.name}")
                 self.__sent_ping = True
             else:
                 # Not registered.
@@ -181,22 +178,21 @@ class Client(object):
             command = x[0].upper()
             if len(x) == 1:
                 arguments = []
+            elif len(x[1]) > 0 and x[1][0] == ":":
+                arguments = [x[1][1:]]
             else:
-                if len(x[1]) > 0 and x[1][0] == ":":
-                    arguments = [x[1][1:]]
-                else:
-                    y = x[1].split(" :", 1)
-                    arguments = y[0].split()
-                    if len(y) == 2:
-                        arguments.append(y[1])
+                y = x[1].split(" :", 1)
+                arguments = y[0].split()
+                if len(y) == 2:
+                    arguments.append(y[1])
             self.__handle_command(command, arguments)
 
     def __pass_handler(self, command, arguments):
-        server = self.server
         if command == "PASS":
             if len(arguments) == 0:
                 self.reply_461("PASS")
             else:
+                server = self.server
                 if arguments[0] == server.password:
                     self.__handle_command = self.__registration_handler
                 else:
@@ -213,9 +209,9 @@ class Client(object):
                 return
             nick = arguments[0]
             if server.get_client(nick):
-                self.reply("433 * %s :Nickname is already in use" % nick)
+                self.reply(f"433 * {nick} :Nickname is already in use")
             elif not self.__valid_nickname_regexp.match(nick):
-                self.reply("432 * %s :Erroneous nickname" % nick)
+                self.reply(f"432 * {nick} :Erroneous nickname")
             else:
                 self.nickname = nick
                 server.client_changed_nickname(self, None)
@@ -229,10 +225,12 @@ class Client(object):
             self.disconnect("Client quit")
             return
         if self.nickname and self.user:
-            self.reply("001 %s :Hi, welcome to IRC" % self.nickname)
-            self.reply("002 %s :Your host is %s, running version miniircd-%s" % (self.nickname, server.name, VERSION))
-            self.reply("003 %s :This server was created sometime" % self.nickname)
-            self.reply("004 %s %s miniircd-%s o o" % (self.nickname, server.name, VERSION))
+            self.reply(f"001 {self.nickname} :Hi, welcome to IRC")
+            self.reply(
+                f"002 {self.nickname} :Your host is {server.name}, running version miniircd-{VERSION}"
+            )
+            self.reply(f"003 {self.nickname} :This server was created sometime")
+            self.reply(f"004 {self.nickname} {server.name} miniircd-{VERSION} o o")
             self.send_lusers()
             self.send_motd()
             self.__handle_command = self.__command_handler
@@ -244,10 +242,7 @@ class Client(object):
             channelnames = arguments[0].split(",")
         else:
             channelnames = sorted(self.channels.keys())
-        if len(arguments) > 1:
-            keys = arguments[1].split(",")
-        else:
-            keys = []
+        keys = arguments[1].split(",") if len(arguments) > 1 else []
         keys.extend((len(channelnames) - len(keys)) * [None])
         for i, channelname in enumerate(channelnames):
             if for_join and irc_lower(channelname) in self.channels:
@@ -257,7 +252,9 @@ class Client(object):
                 continue
             channel = server.get_channel(channelname)
             if channel.key is not None and channel.key != keys[i]:
-                self.reply("475 %s %s :Cannot join channel (+k) - bad key" % (self.nickname, channelname))
+                self.reply(
+                    f"475 {self.nickname} {channelname} :Cannot join channel (+k) - bad key"
+                )
                 continue
 
             if for_join:
@@ -266,10 +263,10 @@ class Client(object):
                 self.message_channel(channel, "JOIN", channelname, True)
                 self.channel_log(channel, "joined", meta=True)
                 if channel.topic:
-                    self.reply("332 %s %s :%s" % (self.nickname, channel.name, channel.topic))
+                    self.reply(f"332 {self.nickname} {channel.name} :{channel.topic}")
                 else:
-                    self.reply("331 %s %s :No topic is set" % (self.nickname, channel.name))
-            names_prefix = "353 %s = %s :" % (self.nickname, channelname)
+                    self.reply(f"331 {self.nickname} {channel.name} :No topic is set")
+            names_prefix = f"353 {self.nickname} = {channelname} :"
             names = ""
             # Max length: reply prefix ":server_name(space)" plus CRLF in
             # the end.
@@ -277,15 +274,14 @@ class Client(object):
             for name in sorted(x.nickname for x in channel.members):
                 if not names:
                     names = names_prefix + name
-                # Using >= to include the space between "names" and "name".
                 elif len(names) + len(name) >= names_max_len:
                     self.reply(names)
                     names = names_prefix + name
                 else:
-                    names += " " + name
+                    names += f" {name}"
             if names:
                 self.reply(names)
-            self.reply("366 %s %s :End of NAMES list" % (self.nickname, channelname))
+            self.reply(f"366 {self.nickname} {channelname} :End of NAMES list")
 
     def __command_handler(self, command, arguments):
         def away_handler():
@@ -297,7 +293,7 @@ class Client(object):
                 return
             nicks = arguments
             online = [n for n in nicks if server.get_client(n)]
-            self.reply("303 %s :%s" % (self.nickname, " ".join(online)))
+            self.reply(f'303 {self.nickname} :{" ".join(online)}')
 
         def join_handler():
             if len(arguments) < 1:
@@ -324,7 +320,7 @@ class Client(object):
             sorted_channels = sorted(channels, key=lambda x: x.name)
             for channel in sorted_channels:
                 self.reply("322 %s %s %d :%s" % (self.nickname, channel.name, len(channel.members), channel.topic))
-            self.reply("323 %s :End of LIST" % self.nickname)
+            self.reply(f"323 {self.nickname} :End of LIST")
 
         def lusers_handler():
             self.send_lusers()
@@ -340,10 +336,10 @@ class Client(object):
                     if channel.key:
                         modes = "+k"
                         if irc_lower(channel.name) in self.channels:
-                            modes += " %s" % channel.key
+                            modes += f" {channel.key}"
                     else:
                         modes = "+"
-                    self.reply("324 %s %s %s" % (self.nickname, targetname, modes))
+                    self.reply(f"324 {self.nickname} {targetname} {modes}")
                     return
                 flag = arguments[1]
                 if flag == "+k":
@@ -353,24 +349,24 @@ class Client(object):
                     key = arguments[2]
                     if irc_lower(channel.name) in self.channels:
                         channel.key = key
-                        self.message_channel(channel, "MODE", "%s +k %s" % (channel.name, key), True)
-                        self.channel_log(channel, "set channel key to %s" % key, meta=True)
+                        self.message_channel(channel, "MODE", f"{channel.name} +k {key}", True)
+                        self.channel_log(channel, f"set channel key to {key}", meta=True)
                     else:
-                        self.reply("442 %s :You're not on that channel" % targetname)
+                        self.reply(f"442 {targetname} :You're not on that channel")
                 elif flag == "-k":
                     if irc_lower(channel.name) in self.channels:
                         channel.key = None
-                        self.message_channel(channel, "MODE", "%s -k" % channel.name, True)
+                        self.message_channel(channel, "MODE", f"{channel.name} -k", True)
                         self.channel_log(channel, "removed channel key", meta=True)
                     else:
-                        self.reply("442 %s :You're not on that channel" % targetname)
+                        self.reply(f"442 {targetname} :You're not on that channel")
                 else:
-                    self.reply("472 %s %s :Unknown MODE flag" % (self.nickname, flag))
+                    self.reply(f"472 {self.nickname} {flag} :Unknown MODE flag")
             elif targetname == self.nickname:
                 if len(arguments) == 1:
-                    self.reply("221 %s +" % self.nickname)
+                    self.reply(f"221 {self.nickname} +")
                 else:
-                    self.reply("501 %s :Unknown MODE flag" % self.nickname)
+                    self.reply(f"501 {self.nickname} :Unknown MODE flag")
             else:
                 self.reply_403(targetname)
 
@@ -389,73 +385,67 @@ class Client(object):
             if newnick == self.nickname:
                 pass
             elif client and client is not self:
-                self.reply("433 %s %s :Nickname is already in use" % (self.nickname, newnick))
+                self.reply(f"433 {self.nickname} {newnick} :Nickname is already in use")
             elif not self.__valid_nickname_regexp.match(newnick):
-                self.reply("432 %s %s :Erroneous Nickname" % (self.nickname, newnick))
+                self.reply(f"432 {self.nickname} {newnick} :Erroneous Nickname")
             else:
                 for x in self.channels.values():
-                    self.channel_log(x, "changed nickname to %s" % newnick, meta=True)
+                    self.channel_log(x, f"changed nickname to {newnick}", meta=True)
                 oldnickname = self.nickname
                 self.nickname = newnick
                 server.client_changed_nickname(self, oldnickname)
                 self.message_related(
-                    ":%s!%s@%s NICK %s" % (oldnickname, self.user, self.host, self.nickname),
+                    f":{oldnickname}!{self.user}@{self.host} NICK {self.nickname}",
                     True,
                 )
 
         def notice_and_privmsg_handler():
             if len(arguments) == 0:
-                self.reply("411 %s :No recipient given (%s)" % (self.nickname, command))
+                self.reply(f"411 {self.nickname} :No recipient given ({command})")
                 return
             if len(arguments) == 1:
-                self.reply("412 %s :No text to send" % self.nickname)
+                self.reply(f"412 {self.nickname} :No text to send")
                 return
             targetname = arguments[0]
             message = arguments[1]
             client = server.get_client(targetname)
             if client:
-                client.message(":%s %s %s :%s" % (self.prefix, command, targetname, message))
+                client.message(f":{self.prefix} {command} {targetname} :{message}")
             elif server.has_channel(targetname):
                 channel = server.get_channel(targetname)
-                self.message_channel(channel, command, "%s :%s" % (channel.name, message))
+                self.message_channel(channel, command, f"{channel.name} :{message}")
                 self.channel_log(channel, message)
             else:
-                self.reply("401 %s %s :No such nick/channel" % (self.nickname, targetname))
+                self.reply(f"401 {self.nickname} {targetname} :No such nick/channel")
 
         def part_handler():
             if len(arguments) < 1:
                 self.reply_461("PART")
                 return
-            if len(arguments) > 1:
-                partmsg = arguments[1]
-            else:
-                partmsg = self.nickname
+            partmsg = arguments[1] if len(arguments) > 1 else self.nickname
             for channelname in arguments[0].split(","):
                 if not valid_channel_re.match(channelname):
                     self.reply_403(channelname)
-                elif not irc_lower(channelname) in self.channels:
-                    self.reply("442 %s %s :You're not on that channel" % (self.nickname, channelname))
+                elif irc_lower(channelname) not in self.channels:
+                    self.reply(f"442 {self.nickname} {channelname} :You're not on that channel")
                 else:
                     channel = self.channels[irc_lower(channelname)]
-                    self.message_channel(channel, "PART", "%s :%s" % (channelname, partmsg), True)
-                    self.channel_log(channel, "left (%s)" % partmsg, meta=True)
+                    self.message_channel(channel, "PART", f"{channelname} :{partmsg}", True)
+                    self.channel_log(channel, f"left ({partmsg})", meta=True)
                     del self.channels[irc_lower(channelname)]
                     server.remove_member_from_channel(self, channelname)
 
         def ping_handler():
             if len(arguments) < 1:
-                self.reply("409 %s :No origin specified" % self.nickname)
+                self.reply(f"409 {self.nickname} :No origin specified")
                 return
-            self.reply("PONG %s :%s" % (server.name, arguments[0]))
+            self.reply(f"PONG {server.name} :{arguments[0]}")
 
         def pong_handler():
             pass
 
         def quit_handler():
-            if len(arguments) < 1:
-                quitmsg = self.nickname
-            else:
-                quitmsg = arguments[0]
+            quitmsg = self.nickname if len(arguments) < 1 else arguments[0]
             self.disconnect(quitmsg)
 
         def topic_handler():
@@ -468,15 +458,15 @@ class Client(object):
                 if len(arguments) > 1:
                     newtopic = arguments[1]
                     channel.topic = newtopic
-                    self.message_channel(channel, "TOPIC", "%s :%s" % (channelname, newtopic), True)
+                    self.message_channel(channel, "TOPIC", f"{channelname} :{newtopic}", True)
                     self.channel_log(channel, "set topic to %r" % newtopic, meta=True)
                 else:
                     if channel.topic:
-                        self.reply("332 %s %s :%s" % (self.nickname, channel.name, channel.topic))
+                        self.reply(f"332 {self.nickname} {channel.name} :{channel.topic}")
                     else:
-                        self.reply("331 %s %s :No topic is set" % (self.nickname, channel.name))
+                        self.reply(f"331 {self.nickname} {channel.name} :No topic is set")
             else:
-                self.reply("442 %s :You're not on that channel" % channelname)
+                self.reply(f"442 {channelname} :You're not on that channel")
 
         def wallops_handler():
             if len(arguments) < 1:
@@ -484,7 +474,9 @@ class Client(object):
                 return
             message = arguments[0]
             for client in server.clients.values():
-                client.message(":%s NOTICE %s :Global notice: %s" % (self.prefix, client.nickname, message))
+                client.message(
+                    f":{self.prefix} NOTICE {client.nickname} :Global notice: {message}"
+                )
 
         def who_handler():
             if len(arguments) < 1:
@@ -494,18 +486,9 @@ class Client(object):
                 channel = server.get_channel(targetname)
                 for member in channel.members:
                     self.reply(
-                        "352 %s %s %s %s %s %s H :0 %s"
-                        % (
-                            self.nickname,
-                            targetname,
-                            member.user,
-                            member.host,
-                            server.name,
-                            member.nickname,
-                            member.realname,
-                        )
+                        f"352 {self.nickname} {targetname} {member.user} {member.host} {server.name} {member.nickname} H :0 {member.realname}"
                     )
-                self.reply("315 %s %s :End of WHO list" % (self.nickname, targetname))
+                self.reply(f"315 {self.nickname} {targetname} :End of WHO list")
 
         def whois_handler():
             if len(arguments) < 1:
@@ -514,27 +497,15 @@ class Client(object):
             user = server.get_client(username)
             if user:
                 self.reply(
-                    "311 %s %s %s %s * :%s"
-                    % (
-                        self.nickname,
-                        user.nickname,
-                        user.user,
-                        user.host,
-                        user.realname,
-                    )
+                    f"311 {self.nickname} {user.nickname} {user.user} {user.host} * :{user.realname}"
                 )
-                self.reply("312 %s %s %s :%s" % (self.nickname, user.nickname, server.name, server.name))
+                self.reply(f"312 {self.nickname} {user.nickname} {server.name} :{server.name}")
                 self.reply(
-                    "319 %s %s :%s"
-                    % (
-                        self.nickname,
-                        user.nickname,
-                        "".join(x + " " for x in user.channels),
-                    )
+                    f'319 {self.nickname} {user.nickname} :{"".join(f"{x} " for x in user.channels)}'
                 )
-                self.reply("318 %s %s :End of WHOIS list" % (self.nickname, user.nickname))
+                self.reply(f"318 {self.nickname} {user.nickname} :End of WHOIS list")
             else:
-                self.reply("401 %s %s :No such nick" % (self.nickname, username))
+                self.reply(f"401 {self.nickname} {username} :No such nick")
 
         handler_table = {
             "AWAY": away_handler,
@@ -562,7 +533,7 @@ class Client(object):
         try:
             handler_table[command]()
         except KeyError:
-            self.reply("421 %s %s :Unknown command" % (self.nickname, command))
+            self.reply(f"421 {self.nickname} {command} :Unknown command")
 
     def socket_readable_notification(self):
         try:
@@ -589,8 +560,10 @@ class Client(object):
             self.disconnect(x)
 
     def disconnect(self, quitmsg):
-        self.message("ERROR :%s" % quitmsg)
-        self.server.print_info("Disconnected connection from %s:%s (%s)." % (self.host, self.port, quitmsg))
+        self.message(f"ERROR :{quitmsg}")
+        self.server.print_info(
+            f"Disconnected connection from {self.host}:{self.port} ({quitmsg})."
+        )
         self.socket.close()
         self.server.remove_client(self, quitmsg)
 
@@ -598,17 +571,17 @@ class Client(object):
         self.__writebuffer += msg + "\r\n"
 
     def reply(self, msg):
-        self.message(":%s %s" % (self.server.name, msg))
+        self.message(f":{self.server.name} {msg}")
 
     def reply_403(self, channel):
-        self.reply("403 %s %s :No such channel" % (self.nickname, channel))
+        self.reply(f"403 {self.nickname} {channel} :No such channel")
 
     def reply_461(self, command):
         nickname = self.nickname or "*"
-        self.reply("461 %s %s :Not enough parameters" % (nickname, command))
+        self.reply(f"461 {nickname} {command} :Not enough parameters")
 
     def message_channel(self, channel, command, message, include_self=False):
-        line = ":%s %s %s" % (self.prefix, command, message)
+        line = f":{self.prefix} {command} {message}"
         for client in channel.members:
             if client != self or include_self:
                 client.message(line)
@@ -616,15 +589,11 @@ class Client(object):
     def channel_log(self, channel, message, meta=False):
         if not self.server.channel_log_dir:
             return
-        if meta:
-            format = "[%s] * %s %s\n"
-        else:
-            format = "[%s] <%s> %s\n"
+        format = "[%s] * %s %s\n" if meta else "[%s] <%s> %s\n"
         timestamp = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
         logname = irc_lower(channel.name).replace("_", "__").replace("/", "_")
-        fp = open("%s/%s.log" % (self.server.channel_log_dir, logname), "a")
-        fp.write(format % (timestamp, self.nickname, message))
-        fp.close()
+        with open(f"{self.server.channel_log_dir}/{logname}.log", "a") as fp:
+            fp.write(format % (timestamp, self.nickname, message))
 
     def message_related(self, msg, include_self=False):
         clients = set()
@@ -642,14 +611,13 @@ class Client(object):
 
     def send_motd(self):
         server = self.server
-        motdlines = server.get_motd_lines()
-        if motdlines:
-            self.reply("375 %s :- %s Message of the day -" % (self.nickname, server.name))
+        if motdlines := server.get_motd_lines():
+            self.reply(f"375 {self.nickname} :- {server.name} Message of the day -")
             for line in motdlines:
-                self.reply("372 %s :- %s" % (self.nickname, line.rstrip()))
-            self.reply("376 %s :End of /MOTD command" % self.nickname)
+                self.reply(f"372 {self.nickname} :- {line.rstrip()}")
+            self.reply(f"376 {self.nickname} :End of /MOTD command")
         else:
-            self.reply("422 %s :MOTD File is missing" % self.nickname)
+            self.reply(f"422 {self.nickname} :MOTD File is missing")
 
 
 class Server(object):

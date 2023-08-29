@@ -14,11 +14,7 @@ def register(func, *args, **kwargs):
 
 def unregister(func):
     global plan
-    todel = []
-    for i, elem in enumerate(plan):
-        if elem[0] is func:
-            todel.append(i)
-
+    todel = [i for i, elem in enumerate(plan) if elem[0] is func]
     while len(todel):
         plan.pop(todel.pop())
 

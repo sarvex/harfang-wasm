@@ -96,13 +96,13 @@ except:
                     testline = testline.replace("import ", "").strip()
                     for elem in map(str.strip, testline.split(",")):
                         elem = elem.split(" as ")[0]
-                        if not elem in imports:
+                        if elem not in imports:
                             imports.append(elem)
 
                 elif testline.startswith("from "):
                     testline = testline.replace("from ", "").strip()
                     elem = testline.split(" import ")[0].strip()
-                    if not elem in imports:
+                    if elem not in imports:
                         imports.append(elem)
 
                 __prepro.append(l)
@@ -110,7 +110,7 @@ except:
                 if l[0] in ("""\n\r\t'" """):
                     continue
 
-                if not l.find("=") > 0:
+                if l.find("=") <= 0:
                     continue
 
                 l = l.strip()
@@ -145,7 +145,7 @@ except:
 
                     # TODO handle (a,)=(0,) case types
 
-                    if not varname in myglobs:
+                    if varname not in myglobs:
                         myglobs.append(varname)
 
             myglob = f"global {', '.join(myglobs)}\n"
@@ -202,9 +202,7 @@ try:
 except Exception as e:
     sys.print_exception(e)
     # TODO: build a pyconfig extracted from C here
-    PyConfig = {}
-    PyConfig["dev_mode"] = 1
-    PyConfig["run_filename"] = "main.py"
+    PyConfig = {"dev_mode": 1, "run_filename": "main.py"}
     PyConfig["executable"] = sys.executable
     PyConfig["interactive"] = 1
     print(" - running in wasm simulator - ")
@@ -279,8 +277,7 @@ class shell:
 
         if pygame.display.get_init():
             return pygame.display.get_surface()
-        screen = pygame.display.set_mode([cls.screen_width, cls.screen_height])
-        return screen
+        return pygame.display.set_mode([cls.screen_width, cls.screen_height])
 
     @classmethod
     def find(cls, *argv):
@@ -546,7 +543,7 @@ ________________________
 
         try:
             time_start = time.time()
-            code = compile("builtins._ =" + cmd, "<stdin>", "exec")
+            code = compile(f"builtins._ ={cmd}", "<stdin>", "exec")
             exec(code, __main__dict, __main__dict)
             if builtins._ is undefined:
                 return True
@@ -677,7 +674,7 @@ ________________________
                 if TopLevel_async_handler.muted:
                     return True
 
-                if code[0:320].find("#!pgzrun") >= 0:
+                if code[:320].find("#!pgzrun") >= 0:
                     shell.pgzrunning = True
 
                 if code.find("asyncio.run") < 0:
@@ -701,7 +698,7 @@ ________________________
         realpath = str(main)
         if realpath[0] not in "./":
             realpath = str(Path.cwd() / main)
-        __import__("__main__").__file__ = str(realpath)
+        __import__("__main__").__file__ = realpath
         cls.HOME = Path(realpath).parent
         os.chdir(cls.HOME)
 
@@ -748,7 +745,7 @@ ________________________
             TopLevel_async_handler.muted = False
 
     @classmethod
-    def parse_sync(shell, line, **env):
+    def parse_sync(cls, line, **env):
         catch = True
         for cmd in line.strip().split(";"):
             cmd = cmd.strip()
@@ -758,8 +755,8 @@ ________________________
             else:
                 args = ()
 
-            if hasattr(shell, cmd):
-                fn = getattr(shell, cmd)
+            if hasattr(cls, cmd):
+                fn = getattr(cls, cmd)
 
                 try:
                     if inspect.isgeneratorfunction(fn):
@@ -777,7 +774,7 @@ ________________________
                 except Exception as cmderror:
                     print(cmderror, file=sys.stderr)
             elif cmd.endswith(".py"):
-                shell.coro.append(shell.source(cmd, *args, **env))
+                cls.coro.append(cls.source(cmd, *args, **env))
             else:
                 catch = undefined
         return catch
@@ -841,14 +838,12 @@ if not aio.cross.simulator:
 
     def fix_url(maybe_url):
         url = str(maybe_url)
-        if url.startswith("http://"):
-            pass
-        elif url.startswith("https://"):
+        if url.startswith("http://") or url.startswith("https://"):
             pass
         elif url.startswith("https:/"):
-            url = "https:/" + url[6:]
+            url = f"https:/{url[6:]}"
         elif url.startswith("http:/"):
-            url = "http:/" + url[5:]
+            url = f"http:/{url[5:]}"
         return url
 
     __EMSCRIPTEN__.fix_url = fix_url
@@ -1148,10 +1143,10 @@ if not aio.cross.simulator:
                         try:
                             __import__(mod)
                             continue
-                        except (ModuleNotFoundError, ImportError):
+                        except ImportError:
                             pass
 
-                    if not mod in required:
+                    if mod not in required:
                         required.append(mod)
 
             DBG(f"1020: import scan {filename=} {len(code)=} {required}")
@@ -1160,12 +1155,7 @@ if not aio.cross.simulator:
         @classmethod
         def list_imports(cls, code=None, file=None):
             if code is None:
-                if file:
-                    with open(file) as fcode:
-                        code = fcode.read()
-                else:
-                    code = ""
-
+                code = Path(file).read_text() if file else ""
             HTML_MARK = '"" # BEGIN -->'
 
             file = file or "<stdin>"
@@ -1191,7 +1181,7 @@ if not aio.cross.simulator:
                     if repo:
                         DBG(f"1063: {repo['-CDN-']=} does not provide {want=}")
                     else:
-                        pdb(f"1081: no pkg repository available")
+                        pdb("1081: no pkg repository available")
 
         @classmethod
         def imports(cls, *mods, lvl=0, wants=[]):
@@ -1205,7 +1195,7 @@ if not aio.cross.simulator:
                     if mod in sys.modules:
                         continue
 
-                    if (not dep in wants) and (not dep in cls.ignore):
+                    if dep not in wants and dep not in cls.ignore:
                         unseen = True
                         wants.insert(0, dep)
 
@@ -1217,7 +1207,7 @@ if not aio.cross.simulator:
                     if mod in sys.modules:
                         continue
 
-                    if (not dep in wants) and (not dep in cls.ignore):
+                    if dep not in wants and dep not in cls.ignore:
                         wants.append(dep)
             # always get numpy first
             if "numpy" in wants:
@@ -1314,7 +1304,7 @@ if not aio.cross.simulator:
 
             # print("1117: remapping ?", PyConfig.dev_mode)
             if PyConfig.pygbag > 0:
-                for idx, repo in enumerate(PyConfig.pkg_repolist):
+                for repo in PyConfig.pkg_repolist:
                     DBG("1264:", repo["-CDN-"], "REMAPPED TO", PyConfig.pkg_indexes[-1])
                     repo["-CDN-"] = PyConfig.pkg_indexes[-1]
 
@@ -1526,7 +1516,6 @@ def patch():
             embed.warn("RESETTING TERMINAL")
 
         termios.state += 1
-        pass
 
     termios.set_raw_mode = patch_termios_set_raw_mode
     termios.state = 0
@@ -1705,11 +1694,11 @@ try:
 except:
 
     class console:
-        def log(*argv, **kw):
+        def log(self, **kw):
             import io
 
             kw["file"] = io.StringIO(newline="\r\n")
-            print(*argv, **kw)
+            print(*self, **kw)
             embed.warn(kw["file"].getvalue())
 
 
@@ -1815,14 +1804,13 @@ async def import_site(__file__, run=True):
                 local = tmpdir / source.rsplit("/", 1)[-1]
                 await shell.exec(shell.wget(f"-O{local}", source))
 
-            # TODO: test tar.bz2 lzma tar.xz
             elif ext in ("zip", "gz", "tar", "apk", "jar"):
                 DBG(f"1664: found archive source {source=}")
                 # download and unpack into tmpdir
                 fname = tmpdir / source.rsplit("/")[-1]
 
                 if ext in ("apk", "jar"):
-                    fname = fname + ".zip"
+                    fname = f"{fname}.zip"
 
                 async with fopen(source, "rb") as zipdata:
                     with open(fname, "wb") as file:
@@ -1857,7 +1845,7 @@ async def import_site(__file__, run=True):
                 print()
 
             # TODO: check orig_argv for isolation parameters
-            if not pdir in sys.path:
+            if pdir not in sys.path:
                 sys.path.insert(0, pdir)
             if run:
                 await shell.runpy(local)
