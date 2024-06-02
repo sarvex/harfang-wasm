@@ -15,7 +15,7 @@ jobs:
         LD_VENDOR: -sUSE_GLFW=3 
 
     steps:
-    - uses: actions/checkout@v3.3.0
+    - uses: actions/checkout@v3.6.0
     - name: pygame-wasm-builder prepare
       run: |
             pwd
